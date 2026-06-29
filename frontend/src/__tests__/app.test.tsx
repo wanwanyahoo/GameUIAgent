@@ -32,4 +32,15 @@ describe("App", () => {
     assert.match(html, /Webhook/);
     assert.match(html, /Cancel/);
   });
+
+  it("renders the Unity plugin protocol and restyle chain", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Unity plugin protocol/);
+    assert.match(html, /Manifest/);
+    assert.match(html, /Download ZIP/);
+    assert.match(html, /Import log/);
+    assert.match(html, /Replacement manifest/);
+    assert.match(html, /preserve RectTransform/);
+  });
 });

@@ -3,7 +3,8 @@ import {
   createDemoProject,
   importSources,
   platformCapabilities,
-  productionWorkflow
+  productionWorkflow,
+  unityPluginFlow
 } from "./lib/platform";
 
 const demoProject = createDemoProject("Cyberpunk RPG UI", "unity");
@@ -140,6 +141,28 @@ export function App() {
               <div className="control-row">
                 {service.controls.map((control) => (
                   <b key={control}>{control}</b>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" id="unity-plugin">
+        <div className="section-heading">
+          <p className="eyebrow">Unity plugin protocol</p>
+          <h2>Manifest, package download, import logs and restyle replacement stay connected.</h2>
+        </div>
+        <div className="unity-flow">
+          {unityPluginFlow.map((step, index) => (
+            <article className="unity-step" key={step.id}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{step.title}</h3>
+              <code>{step.apiPath}</code>
+              <p>{step.detail}</p>
+              <div className="control-row">
+                {step.outputs.map((output) => (
+                  <b key={output}>{output}</b>
                 ))}
               </div>
             </article>

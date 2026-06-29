@@ -326,6 +326,95 @@ def test_developer_api_super_matting_cost_execute_poll_cancel():
     assert cancel_response.json()["status"] == "cancelled"
 
 
+def create_unity_export(headers: dict[str, str], name: str = "Plugin HUD") -> dict:
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": name,
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "unity plugin import hud"},
+    ).json()
+    segmentation = client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": job["result_asset"]["id"]},
+    ).json()
+    export = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": segmentation["ir"]["id"], "target_engine": "unity"},
+    ).json()
+    return {"project": project, "export": export}
+
+
+def test_unity_plugin_manifest_download_and_import_log_flow():
+    headers = auth_headers()
+    created = create_unity_export(headers)
+    export_id = created["export"]["id"]
+
+    manifest_response = client.get(f"/api/plugin/exports/{export_id}/manifest", headers=headers)
+    assert manifest_response.status_code == 200
+    manifest = manifest_response.json()
+    assert manifest["engine"] == "unity"
+    assert manifest["entry"]["type"] == "prefab"
+    assert manifest["entry"]["path"].endswith("PluginHud.prefab")
+    assert manifest["download_url"] == f"/api/plugin/exports/{export_id}/download"
+    assert manifest["unity_import_plan"]["steps"] == [
+        "extract_zip",
+        "import_textures_as_sprites",
+        "create_prefab",
+        "create_scene",
+        "write_import_log",
+    ]
+
+    download_response = client.get(f"/api/plugin/exports/{export_id}/download", headers=headers)
+    assert download_response.status_code == 200
+    package = download_response.json()
+    assert package["content_type"] == "application/zip"
+    assert package["manifest"]["package_id"] == export_id
+    assert "Assets/GameUIAgent/Prefabs/PluginHud.prefab" in package["files"]
+
+    log_response = client.post(
+        "/api/plugin/import-logs",
+        headers=headers,
+        json={
+            "export_id": export_id,
+            "engine": "unity",
+            "status": "succeeded",
+            "plugin_version": "0.1.0",
+            "engine_version": "2022.3.40f1",
+            "duration_ms": 3400,
+            "summary": {
+                "assets_imported": 4,
+                "prefabs_created": 1,
+                "scenes_created": 1,
+                "warnings": 0,
+                "errors": 0,
+            },
+            "logs": [{"level": "info", "message": "Imported PluginHud.prefab"}],
+        },
+    )
+    assert log_response.status_code == 201
+    assert log_response.json()["summary"]["prefabs_created"] == 1
+
+
+def test_plugin_cannot_read_other_users_export_manifest():
+    owner_headers = auth_headers()
+    export_id = create_unity_export(owner_headers, "Private HUD")["export"]["id"]
+    other_headers = auth_headers()
+
+    response = client.get(f"/api/plugin/exports/{export_id}/manifest", headers=other_headers)
+
+    assert response.status_code == 404
+
+
 def test_unity_restyle_preserves_layout_bindings():
     headers = auth_headers()
     project = client.post(
@@ -377,3 +466,11 @@ def test_unity_restyle_preserves_layout_bindings():
         "StartGameController",
     ]
     assert restyle["replacement_manifest"]["strategy"] == "theme_variant"
+    assert restyle["replacement_manifest"]["layout_policy"] == "preserve_rect_transform"
+    assert restyle["replacement_manifest"]["replacements"][0]["node_path"] == "Canvas/HUD/StartButton"
+    assert restyle["replacement_manifest"]["replacements"][0]["rect"] == {
+        "x": 512,
+        "y": 600,
+        "width": 300,
+        "height": 88,
+    }

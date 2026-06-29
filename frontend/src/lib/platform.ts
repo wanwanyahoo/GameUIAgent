@@ -25,6 +25,14 @@ export type AiPipelineService = {
   controls: string[];
 };
 
+export type UnityPluginStep = {
+  id: "manifest" | "download" | "import-log" | "restyle-manifest";
+  title: string;
+  apiPath: string;
+  detail: string;
+  outputs: string[];
+};
+
 export type DemoTask = {
   kind: "text_to_image" | "ui_segmentation" | "unity_export" | "plugin_import";
   status: "ready" | "running" | "succeeded";
@@ -215,6 +223,37 @@ export const aiPipelineServices: AiPipelineService[] = [
     title: "Upscale",
     apiEnabled: false,
     controls: ["scale", "quality", "artifact removal"]
+  }
+];
+
+export const unityPluginFlow: UnityPluginStep[] = [
+  {
+    id: "manifest",
+    title: "Manifest",
+    apiPath: "/api/plugin/exports/{export_id}/manifest",
+    detail: "Unity Editor reads package metadata, prefab entry, import plan and checksum.",
+    outputs: ["package id", "prefab entry", "unity import plan"]
+  },
+  {
+    id: "download",
+    title: "Download ZIP",
+    apiPath: "/api/plugin/exports/{export_id}/download",
+    detail: "Plugin downloads the Unity-ready package and verifies it before extraction.",
+    outputs: ["Unity ZIP", "checksum", "prefab entry"]
+  },
+  {
+    id: "import-log",
+    title: "Import log",
+    apiPath: "/api/plugin/import-logs",
+    detail: "Editor reports imported assets, prefab creation, scene creation and warnings.",
+    outputs: ["assets imported", "prefabs created", "warnings"]
+  },
+  {
+    id: "restyle-manifest",
+    title: "Replacement manifest",
+    apiPath: "/api/plugin/engine-snapshots/{snapshot_id}/restyle",
+    detail: "Existing Unity UI keeps layout and script bindings while sprites are restyled.",
+    outputs: ["preserve RectTransform", "node path mapping", "replacement sprites"]
   }
 ];
 

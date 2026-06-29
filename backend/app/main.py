@@ -91,6 +91,17 @@ class MattingExecuteRequest(MattingCostRequest):
     webhook_url: str | None = None
 
 
+class PluginImportLogRequest(BaseModel):
+    export_id: str
+    engine: str
+    status: str
+    plugin_version: str
+    engine_version: str
+    duration_ms: int
+    summary: dict[str, int]
+    logs: list[dict[str, str]]
+
+
 store: dict[str, Any] = {
     "users": {},
     "tokens": {},
@@ -103,6 +114,7 @@ store: dict[str, Any] = {
     "imports": {},
     "api_keys": {},
     "developer_tasks": {},
+    "import_logs": {},
 }
 
 
@@ -307,8 +319,10 @@ def create_export(
         "project_id": project["id"],
         "target_engine": payload.target_engine,
         "status": "ready",
-        "package": build_export_package(project, payload.target_engine),
+        "package": build_export_package(project, ir, payload.target_engine),
     }
+    export["package"]["manifest"]["package_id"] = export["id"]
+    export["package"]["manifest"]["download_url"] = f"/api/plugin/exports/{export['id']}/download"
     store["exports"][export["id"]] = export
     return export
 
@@ -320,6 +334,46 @@ def plugin_export_jobs(user: dict[str, Any] = Depends(current_user)) -> dict[str
     }
     jobs = [export for export in store["exports"].values() if export["project_id"] in owned_projects]
     return {"jobs": jobs}
+
+
+@app.get("/api/plugin/exports/{export_id}/manifest")
+def plugin_export_manifest(export_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    export = require_export(export_id, user)
+    return export["package"]["manifest"]
+
+
+@app.get("/api/plugin/exports/{export_id}/download")
+def plugin_export_download(export_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    export = require_export(export_id, user)
+    return {
+        "content_type": "application/zip",
+        "export_id": export["id"],
+        "manifest": export["package"]["manifest"],
+        "files": export["package"]["files"],
+        "checksum": export["package"]["manifest"]["checksum"],
+    }
+
+
+@app.post("/api/plugin/import-logs", status_code=status.HTTP_201_CREATED)
+def plugin_import_log(
+    payload: PluginImportLogRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    export = require_export(payload.export_id, user)
+    log = {
+        "id": make_id("ilog"),
+        "export_id": export["id"],
+        "engine": payload.engine,
+        "status": payload.status,
+        "plugin_version": payload.plugin_version,
+        "engine_version": payload.engine_version,
+        "duration_ms": payload.duration_ms,
+        "summary": payload.summary,
+        "logs": payload.logs,
+    }
+    store["import_logs"][log["id"]] = log
+    export["last_import_log_id"] = log["id"]
+    return log
 
 
 @app.post("/api/user/api-keys", status_code=status.HTTP_201_CREATED)
@@ -418,12 +472,15 @@ def restyle_engine_snapshot(
         "strategy": payload.replacement_strategy,
         "theme_name": payload.theme_name,
         "preserve_layout": payload.preserve_layout,
+        "layout_policy": "preserve_rect_transform",
         "preserved_bindings": preserved_bindings,
         "replacements": [
             {
                 "source": sprite["path"],
                 "target": sprite["path"].replace(".png", f".{payload.theme_name}.png"),
                 "role": sprite.get("role", "image"),
+                "node_path": matching_layout_node(snapshot, sprite).get("path"),
+                "rect": matching_layout_node(snapshot, sprite).get("rect"),
             }
             for sprite in snapshot["sprites"]
         ],
@@ -442,6 +499,14 @@ def require_project(project_id: str, user: dict[str, Any]) -> dict[str, Any]:
     if not project or project["owner_id"] != user["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return project
+
+
+def require_export(export_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    export = store["exports"].get(export_id)
+    if not export:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
+    require_project(export["project_id"], user)
+    return export
 
 
 def require_developer_task(task_id: str, user: dict[str, Any]) -> dict[str, Any]:
@@ -537,21 +602,53 @@ def layer_type_to_node_type(layer: dict[str, Any]) -> str:
     return "image"
 
 
-def build_export_package(project: dict[str, Any], target_engine: str) -> dict[str, Any]:
+def build_export_package(project: dict[str, Any], ir: dict[str, Any], target_engine: str) -> dict[str, Any]:
     slug = safe_slug(project["name"])
     if target_engine == "unity":
+        files = [
+            f"Assets/GameUIAgent/Textures/{slug}_atlas.png",
+            f"Assets/GameUIAgent/Prefabs/{slug}.prefab",
+            f"Assets/GameUIAgent/Scenes/{slug}.unity",
+            f"Assets/GameUIAgent/Manifests/{slug}.json",
+        ]
+        manifest = {
+            "package_id": "",
+            "project_id": project["id"],
+            "ir_id": ir["id"],
+            "engine": "unity",
+            "engine_version": "2022.3+",
+            "entry": {"type": "prefab", "path": files[1]},
+            "download_url": "",
+            "checksum": f"sha256:{slug.lower()}",
+            "assets": [{"path": file_path, "kind": unity_asset_kind(file_path)} for file_path in files],
+            "unity_import_plan": {
+                "root": "Assets/GameUIAgent",
+                "steps": [
+                    "extract_zip",
+                    "import_textures_as_sprites",
+                    "create_prefab",
+                    "create_scene",
+                    "write_import_log",
+                ],
+            },
+        }
         return {
             "kind": "unity_package",
-            "files": [
-                f"Assets/GameUIAgent/Textures/{slug}_atlas.png",
-                f"Assets/GameUIAgent/Prefabs/{slug}.prefab",
-                f"Assets/GameUIAgent/Scenes/{slug}.unity",
-                f"Assets/GameUIAgent/Manifests/{slug}.json",
-            ],
+            "files": files,
+            "manifest": manifest,
         }
     return {
         "kind": f"{target_engine}_package",
         "files": [f"exports/{target_engine}/{slug}/manifest.json"],
+        "manifest": {
+            "package_id": "",
+            "project_id": project["id"],
+            "ir_id": ir["id"],
+            "engine": target_engine,
+            "entry": {"type": "manifest", "path": f"exports/{target_engine}/{slug}/manifest.json"},
+            "download_url": "",
+            "checksum": f"sha256:{target_engine}-{slug.lower()}",
+        },
     }
 
 
@@ -559,3 +656,24 @@ def safe_slug(value: str) -> str:
     words = sub(r"[^A-Za-z0-9]+", " ", value).strip().split()
     slug = "".join(word.capitalize() for word in words)
     return slug or "GameUi"
+
+
+def unity_asset_kind(file_path: str) -> str:
+    if "/Textures/" in file_path:
+        return "texture"
+    if "/Prefabs/" in file_path:
+        return "prefab"
+    if "/Scenes/" in file_path:
+        return "scene"
+    return "manifest"
+
+
+def matching_layout_node(snapshot: dict[str, Any], sprite: dict[str, Any]) -> dict[str, Any]:
+    nodes = snapshot["layout"].get("nodes", [])
+    if not nodes:
+        return {}
+    role = sprite.get("role", "").lower()
+    for node in nodes:
+        if role and role in node.get("path", "").lower():
+            return node
+    return nodes[0]

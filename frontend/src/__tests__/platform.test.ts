@@ -6,7 +6,8 @@ import {
   createDemoProject,
   importSources,
   platformCapabilities,
-  productionWorkflow
+  productionWorkflow,
+  unityPluginFlow
 } from "../lib/platform";
 
 describe("platform model", () => {
@@ -69,5 +70,21 @@ describe("platform model", () => {
       "upscale"
     ]);
     assert.equal(aiPipelineServices.find((service) => service.id === "super-matting")?.apiEnabled, true);
+  });
+
+  it("models Unity plugin export and restyle protocol checkpoints", () => {
+    assert.deepEqual(unityPluginFlow.map((step) => step.id), [
+      "manifest",
+      "download",
+      "import-log",
+      "restyle-manifest"
+    ]);
+    assert.equal(unityPluginFlow[0]?.apiPath, "/api/plugin/exports/{export_id}/manifest");
+    assert.deepEqual(unityPluginFlow[1]?.outputs, ["Unity ZIP", "checksum", "prefab entry"]);
+    assert.deepEqual(unityPluginFlow[3]?.outputs, [
+      "preserve RectTransform",
+      "node path mapping",
+      "replacement sprites"
+    ]);
   });
 });

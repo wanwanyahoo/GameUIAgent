@@ -341,7 +341,8 @@ a {
 .workflow,
 .capability-grid,
 .import-grid,
-.pipeline-grid {
+.pipeline-grid,
+.unity-flow {
   display: grid;
   gap: 1rem;
 }
@@ -353,7 +354,8 @@ a {
 .workflow-step,
 .capability-card,
 .import-card,
-.pipeline-card {
+.pipeline-card,
+.unity-step {
   min-height: 220px;
   padding: 1rem;
   border-radius: 1.2rem;
@@ -362,7 +364,8 @@ a {
 .workflow-step span,
 .capability-card span,
 .import-card span,
-.pipeline-card span {
+.pipeline-card span,
+.unity-step span {
   color: #7cf8ff;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.74rem;
@@ -372,13 +375,15 @@ a {
 .workflow-step h3,
 .capability-card h3,
 .import-card h3,
-.pipeline-card h3 {
+.pipeline-card h3,
+.unity-step h3 {
   margin: 1rem 0 0.7rem;
 }
 
 .workflow-step p,
 .capability-card p,
-.import-card p {
+.import-card p,
+.unity-step p {
   color: rgba(232, 247, 255, 0.68);
   line-height: 1.6;
 }
@@ -405,6 +410,30 @@ a {
   display: grid;
   align-content: space-between;
   gap: 1rem;
+}
+
+.unity-flow {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.unity-step {
+  display: grid;
+  align-content: start;
+  gap: 0.85rem;
+  border: 1px solid rgba(124, 248, 255, 0.2);
+  background:
+    radial-gradient(circle at 80% 0%, rgba(124, 248, 255, 0.12), transparent 10rem),
+    linear-gradient(145deg, rgba(11, 24, 42, 0.88), rgba(5, 8, 14, 0.9));
+}
+
+.unity-step code {
+  overflow-wrap: anywhere;
+  padding: 0.62rem;
+  color: #d7ff66;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 0.75rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
 }
 
 .control-row {
@@ -437,6 +466,7 @@ a {
   .workflow,
   .import-grid,
   .pipeline-grid,
+  .unity-flow,
   .capability-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -461,6 +491,7 @@ a {
   .workflow,
   .import-grid,
   .pipeline-grid,
+  .unity-flow,
   .capability-grid {
     grid-template-columns: 1fr;
   }
