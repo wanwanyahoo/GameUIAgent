@@ -94,4 +94,15 @@ describe("App", () => {
     assert.match(html, /Slice Editor/);
     assert.match(html, /Nine-slice/);
   });
+
+  it("renders actionable studio correction and export controls", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Action Dock/);
+    assert.match(html, /Regenerate/);
+    assert.match(html, /Segmentation Corrections/);
+    assert.match(html, /Apply Correction/);
+    assert.match(html, /Export Wizard/);
+    assert.match(html, /Select Target Engine/);
+  });
 });

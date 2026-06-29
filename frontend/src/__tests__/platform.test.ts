@@ -11,9 +11,13 @@ import {
   platformCapabilities,
   pluginConnectionSteps,
   productionWorkflow,
+  studioActionDock,
+  studioActiveSelection,
   studioAssets,
+  studioExportWizardSteps,
   studioInspectorControls,
   studioLayerTree,
+  studioSegmentationCorrections,
   studioTimeline,
   unityPluginFlow
 } from "../lib/platform";
@@ -136,6 +140,23 @@ describe("platform model", () => {
       "anchor",
       "nine-slice",
       "binding"
+    ]);
+  });
+
+  it("models actionable AI Studio correction and export state", () => {
+    assert.deepEqual(studioActionDock.map((action) => action.id), [
+      "regenerate",
+      "open-slice-editor",
+      "apply-correction",
+      "export-package"
+    ]);
+    assert.equal(studioActiveSelection.selectedLayerId, "start_button");
+    assert.equal(studioSegmentationCorrections[0]?.targetLayerId, "start_button");
+    assert.deepEqual(studioExportWizardSteps.map((step) => step.status), [
+      "complete",
+      "active",
+      "pending",
+      "pending"
     ]);
   });
 });

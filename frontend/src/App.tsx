@@ -8,9 +8,13 @@ import {
   platformCapabilities,
   pluginConnectionSteps,
   productionWorkflow,
+  studioActionDock,
+  studioActiveSelection,
   studioAssets,
+  studioExportWizardSteps,
   studioInspectorControls,
   studioLayerTree,
+  studioSegmentationCorrections,
   studioTimeline,
   unityPluginFlow
 } from "./lib/platform";
@@ -125,6 +129,38 @@ export function App() {
                 <b>{control.title}</b>
                 <span>{control.value}</span>
               </p>
+            ))}
+          </div>
+        </div>
+        <div className="studio-ops">
+          <div className="panel action-dock">
+            <h3>Action Dock</h3>
+            <p>Selected layer: {studioActiveSelection.selectedLayerId}</p>
+            <div className="control-row">
+              {studioActionDock.map((action) => (
+                <b key={action.id}>{action.title} / {action.shortcut}</b>
+              ))}
+            </div>
+          </div>
+          <div className="panel correction-queue">
+            <h3>Segmentation Corrections</h3>
+            {studioSegmentationCorrections.map((correction) => (
+              <article key={correction.id}>
+                <span>{correction.targetLayerId}</span>
+                <strong>{correction.title}</strong>
+                <p>{correction.change}</p>
+                <small>{Math.round(correction.confidence * 100)}% confidence</small>
+              </article>
+            ))}
+          </div>
+          <div className="panel export-wizard">
+            <h3>Export Wizard</h3>
+            {studioExportWizardSteps.map((step, index) => (
+              <div className="wizard-step" key={step.id}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <strong>{step.title}</strong>
+                <b>{step.status}</b>
+              </div>
             ))}
           </div>
         </div>

@@ -92,6 +92,32 @@ export type StudioInspectorControl = {
   value: string;
 };
 
+export type StudioAction = {
+  id: "regenerate" | "open-slice-editor" | "apply-correction" | "export-package";
+  title: string;
+  shortcut: string;
+};
+
+export type StudioActiveSelection = {
+  selectedLayerId: string;
+  selectedAssetId: string;
+  activeTaskId: string;
+};
+
+export type StudioSegmentationCorrection = {
+  id: string;
+  targetLayerId: string;
+  title: string;
+  change: string;
+  confidence: number;
+};
+
+export type StudioExportWizardStep = {
+  id: "select-engine" | "validate-ir" | "build-package" | "sync-plugin";
+  title: string;
+  status: "complete" | "active" | "pending";
+};
+
 export type DemoTask = {
   kind: "text_to_image" | "ui_segmentation" | "unity_export" | "plugin_import";
   status: "ready" | "running" | "succeeded";
@@ -549,6 +575,75 @@ export const studioInspectorControls: StudioInspectorControl[] = [
     id: "binding",
     title: "Binding",
     value: "OnClick -> StartGame"
+  }
+];
+
+export const studioActionDock: StudioAction[] = [
+  {
+    id: "regenerate",
+    title: "Regenerate",
+    shortcut: "R"
+  },
+  {
+    id: "open-slice-editor",
+    title: "Open Slice Editor",
+    shortcut: "S"
+  },
+  {
+    id: "apply-correction",
+    title: "Apply Correction",
+    shortcut: "A"
+  },
+  {
+    id: "export-package",
+    title: "Export Package",
+    shortcut: "E"
+  }
+];
+
+export const studioActiveSelection: StudioActiveSelection = {
+  selectedLayerId: "start_button",
+  selectedAssetId: "asset_slice",
+  activeTaskId: "timeline_slice"
+};
+
+export const studioSegmentationCorrections: StudioSegmentationCorrection[] = [
+  {
+    id: "correction_button_bounds",
+    targetLayerId: "start_button",
+    title: "Start Button bounds",
+    change: "Resize hit box to match nine-slice button art.",
+    confidence: 0.92
+  },
+  {
+    id: "correction_label_binding",
+    targetLayerId: "start_label",
+    title: "Start Label binding",
+    change: "Attach text node to the button child hierarchy.",
+    confidence: 0.87
+  }
+];
+
+export const studioExportWizardSteps: StudioExportWizardStep[] = [
+  {
+    id: "select-engine",
+    title: "Select Target Engine",
+    status: "complete"
+  },
+  {
+    id: "validate-ir",
+    title: "Validate Asset IR",
+    status: "active"
+  },
+  {
+    id: "build-package",
+    title: "Build Engine Package",
+    status: "pending"
+  },
+  {
+    id: "sync-plugin",
+    title: "Sync Through Plugin",
+    status: "pending"
   }
 ];
 

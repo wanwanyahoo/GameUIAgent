@@ -288,7 +288,8 @@ a {
 }
 
 .studio-layout,
-.studio-workspace {
+.studio-workspace,
+.studio-ops {
   display: grid;
   gap: 1rem;
 }
@@ -302,6 +303,11 @@ a {
   align-items: stretch;
 }
 
+.studio-ops {
+  grid-template-columns: 0.9fr 1.35fr 1fr;
+  margin-top: 1rem;
+}
+
 .panel {
   min-height: 280px;
   padding: 1.2rem;
@@ -310,6 +316,9 @@ a {
 
 .asset-panel,
 .inspector,
+.action-dock,
+.correction-queue,
+.export-wizard,
 .timeline-panel,
 .layer-tree,
 .inspector-panel {
@@ -321,8 +330,10 @@ a {
 .asset-panel span,
 .inspector p,
 .inspector-panel p,
+.correction-queue article,
 .layer-root,
-.timeline-row {
+.timeline-row,
+.wizard-step {
   margin: 0;
   padding: 0.8rem;
   color: rgba(232, 247, 255, 0.72);
@@ -407,6 +418,42 @@ a {
 .inspector-panel p {
   display: grid;
   gap: 0.4rem;
+}
+
+.action-dock {
+  min-height: unset;
+}
+
+.action-dock p {
+  margin: 0;
+  color: rgba(232, 247, 255, 0.68);
+}
+
+.correction-queue article {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.correction-queue span,
+.correction-queue small,
+.wizard-step span,
+.wizard-step b {
+  color: #d7ff66;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.correction-queue p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.wizard-step {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 .workflow,
@@ -634,6 +681,7 @@ a {
   .hero,
   .studio-layout,
   .studio-workspace,
+  .studio-ops,
   .workflow,
   .import-grid,
   .pipeline-grid,
@@ -664,6 +712,7 @@ a {
   .hero,
   .studio-layout,
   .studio-workspace,
+  .studio-ops,
   .workflow,
   .import-grid,
   .pipeline-grid,
