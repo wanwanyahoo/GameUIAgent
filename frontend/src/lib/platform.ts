@@ -48,6 +48,23 @@ export type PluginConnectionStep = {
   detail: string;
 };
 
+export type BillingPlan = {
+  id: "free" | "base" | "plus" | "pro" | "max";
+  title: string;
+  dailyCredits: number;
+  monthlyCredits: number;
+  concurrentAiTasks: number;
+  apiEnabled: boolean;
+  rateLimitPerMinute: number;
+};
+
+export type CreditBucket = {
+  id: "daily_free" | "monthly" | "purchased";
+  title: string;
+  priority: number;
+  detail: string;
+};
+
 export type DemoTask = {
   kind: "text_to_image" | "ui_segmentation" | "unity_export" | "plugin_import";
   status: "ready" | "running" | "succeeded";
@@ -327,6 +344,75 @@ export const pluginConnectionSteps: PluginConnectionStep[] = [
     title: "Package Download",
     apiPath: "/api/plugin/exports/{export_id}/download",
     detail: "Download the package, verify checksum and start the native import plan."
+  }
+];
+
+export const billingPlans: BillingPlan[] = [
+  {
+    id: "free",
+    title: "Free",
+    dailyCredits: 8,
+    monthlyCredits: 40,
+    concurrentAiTasks: 1,
+    apiEnabled: false,
+    rateLimitPerMinute: 10
+  },
+  {
+    id: "base",
+    title: "Base",
+    dailyCredits: 20,
+    monthlyCredits: 160,
+    concurrentAiTasks: 3,
+    apiEnabled: false,
+    rateLimitPerMinute: 20
+  },
+  {
+    id: "plus",
+    title: "Plus",
+    dailyCredits: 40,
+    monthlyCredits: 360,
+    concurrentAiTasks: 5,
+    apiEnabled: false,
+    rateLimitPerMinute: 30
+  },
+  {
+    id: "pro",
+    title: "PRO",
+    dailyCredits: 80,
+    monthlyCredits: 900,
+    concurrentAiTasks: 8,
+    apiEnabled: true,
+    rateLimitPerMinute: 60
+  },
+  {
+    id: "max",
+    title: "MAX",
+    dailyCredits: 240,
+    monthlyCredits: 3600,
+    concurrentAiTasks: 20,
+    apiEnabled: true,
+    rateLimitPerMinute: 180
+  }
+];
+
+export const creditBuckets: CreditBucket[] = [
+  {
+    id: "daily_free",
+    title: "Daily Free Credits",
+    priority: 1,
+    detail: "Reset daily and are consumed first for Studio and Developer API tasks."
+  },
+  {
+    id: "monthly",
+    title: "Monthly Credits",
+    priority: 2,
+    detail: "Reset each billing cycle and cover regular generation, matting and export workflows."
+  },
+  {
+    id: "purchased",
+    title: "Purchased Credits",
+    priority: 3,
+    detail: "Never expire and are used after daily and monthly balances are depleted."
   }
 ];
 

@@ -64,4 +64,15 @@ describe("App", () => {
     assert.match(html, /Export Query/);
     assert.match(html, /Package Download/);
   });
+
+  it("renders billing credits and developer API limits", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Credits and billing/);
+    assert.match(html, /Daily Free Credits/);
+    assert.match(html, /Monthly Credits/);
+    assert.match(html, /Purchased Credits/);
+    assert.match(html, /PRO/);
+    assert.match(html, /X-RateLimit-Limit/);
+  });
 });

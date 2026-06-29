@@ -3,7 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   aiPipelineServices,
+  billingPlans,
   createDemoProject,
+  creditBuckets,
   engineExportTargets,
   importSources,
   platformCapabilities,
@@ -111,5 +113,13 @@ describe("platform model", () => {
     ]);
     assert.equal(pluginConnectionSteps[0]?.apiPath, "/api/plugin/auth");
     assert.equal(pluginConnectionSteps[2]?.apiPath, "/api/plugin/projects/{project_id}/exports?engine=unity");
+  });
+
+  it("models billing plans, credit buckets and API limits", () => {
+    assert.deepEqual(billingPlans.map((plan) => plan.id), ["free", "base", "plus", "pro", "max"]);
+    assert.equal(billingPlans.find((plan) => plan.id === "pro")?.apiEnabled, true);
+    assert.equal(billingPlans.find((plan) => plan.id === "max")?.concurrentAiTasks, 20);
+    assert.deepEqual(creditBuckets.map((bucket) => bucket.id), ["daily_free", "monthly", "purchased"]);
+    assert.equal(creditBuckets[0]?.priority, 1);
   });
 });

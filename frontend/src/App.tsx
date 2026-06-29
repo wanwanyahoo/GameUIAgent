@@ -1,6 +1,8 @@
 import {
   aiPipelineServices,
+  billingPlans,
   createDemoProject,
+  creditBuckets,
   engineExportTargets,
   importSources,
   platformCapabilities,
@@ -208,6 +210,35 @@ export function App() {
               <p>{step.detail}</p>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section className="section" id="billing">
+        <div className="section-heading">
+          <p className="eyebrow">Credits and billing</p>
+          <h2>Plans, credit buckets, rate limits and API usage stay visible.</h2>
+        </div>
+        <div className="billing-layout">
+          <div className="credit-ledger">
+            {creditBuckets.map((bucket) => (
+              <article className="credit-bucket" key={bucket.id}>
+                <span>Priority {bucket.priority}</span>
+                <h3>{bucket.title}</h3>
+                <p>{bucket.detail}</p>
+              </article>
+            ))}
+          </div>
+          <div className="plan-table">
+            {billingPlans.map((plan) => (
+              <article className="plan-card" key={plan.id}>
+                <span>{plan.apiEnabled ? "API enabled" : "Studio plan"}</span>
+                <h3>{plan.title}</h3>
+                <p>{plan.dailyCredits} daily / {plan.monthlyCredits} monthly credits</p>
+                <small>{plan.concurrentAiTasks} concurrent AI tasks</small>
+                <code>X-RateLimit-Limit: {plan.rateLimitPerMinute}</code>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 

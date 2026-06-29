@@ -344,7 +344,9 @@ a {
 .pipeline-grid,
 .unity-flow,
 .engine-matrix,
-.connection-lane {
+.connection-lane,
+.credit-ledger,
+.plan-table {
   display: grid;
   gap: 1rem;
 }
@@ -359,7 +361,9 @@ a {
 .pipeline-card,
 .unity-step,
 .engine-card,
-.connection-step {
+.connection-step,
+.credit-bucket,
+.plan-card {
   min-height: 220px;
   padding: 1rem;
   border-radius: 1.2rem;
@@ -371,7 +375,9 @@ a {
 .pipeline-card span,
 .unity-step span,
 .engine-card span,
-.connection-step span {
+.connection-step span,
+.credit-bucket span,
+.plan-card span {
   color: #7cf8ff;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.74rem;
@@ -384,7 +390,9 @@ a {
 .pipeline-card h3,
 .unity-step h3,
 .engine-card h3,
-.connection-step h3 {
+.connection-step h3,
+.credit-bucket h3,
+.plan-card h3 {
   margin: 1rem 0 0.7rem;
 }
 
@@ -393,7 +401,9 @@ a {
 .import-card p,
 .unity-step p,
 .engine-card p,
-.connection-step p {
+.connection-step p,
+.credit-bucket p,
+.plan-card p {
   color: rgba(232, 247, 255, 0.68);
   line-height: 1.6;
 }
@@ -483,6 +493,48 @@ a {
   font-size: 0.72rem;
 }
 
+.billing-layout {
+  display: grid;
+  grid-template-columns: 0.95fr 1.55fr;
+  gap: 1rem;
+}
+
+.credit-ledger {
+  grid-template-columns: 1fr;
+}
+
+.plan-table {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.credit-bucket,
+.plan-card {
+  border: 1px solid rgba(215, 255, 102, 0.18);
+  background:
+    radial-gradient(circle at 90% 0%, rgba(215, 255, 102, 0.1), transparent 8rem),
+    linear-gradient(145deg, rgba(17, 27, 20, 0.88), rgba(5, 8, 14, 0.9));
+}
+
+.plan-card {
+  display: grid;
+  align-content: start;
+  gap: 0.8rem;
+}
+
+.plan-card small,
+.plan-card code {
+  color: #d7ff66;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.plan-card code {
+  overflow-wrap: anywhere;
+  padding: 0.55rem;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 0.7rem;
+  font-size: 0.7rem;
+}
+
 .control-row {
   display: flex;
   flex-wrap: wrap;
@@ -516,6 +568,8 @@ a {
   .unity-flow,
   .engine-matrix,
   .connection-lane,
+  .billing-layout,
+  .plan-table,
   .capability-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -543,6 +597,8 @@ a {
   .unity-flow,
   .engine-matrix,
   .connection-lane,
+  .billing-layout,
+  .plan-table,
   .capability-grid {
     grid-template-columns: 1fr;
   }

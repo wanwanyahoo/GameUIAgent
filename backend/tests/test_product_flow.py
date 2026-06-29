@@ -326,6 +326,63 @@ def test_developer_api_super_matting_cost_execute_poll_cancel():
     assert cancel_response.json()["status"] == "cancelled"
 
 
+def test_developer_api_deducts_credits_and_returns_rate_limit_headers():
+    headers = auth_headers()
+
+    key_response = client.post("/api/user/api-keys", headers=headers, json={"name": "billing-ci"})
+    assert key_response.status_code == 201
+    api_headers = {"X-API-Key": key_response.json()["api_key"]}
+
+    billing_response = client.get("/api/user/billing", headers=headers)
+    assert billing_response.status_code == 200
+    initial_billing = billing_response.json()
+    assert initial_billing["plan"]["id"] == "pro_trial"
+    assert initial_billing["credits"]["total_available"] == 120
+
+    cost_response = client.post(
+        "/api/ai/services/super-matting/cost",
+        headers=api_headers,
+        json={
+            "image_url": "https://example.com/large-hero.png",
+            "output": "alpha_png",
+            "width": 1024,
+            "height": 1024,
+        },
+    )
+    assert cost_response.status_code == 200
+    assert cost_response.json()["estimated_credits"] == 10
+    assert cost_response.headers["X-RateLimit-Limit"] == "60"
+    assert int(cost_response.headers["X-RateLimit-Remaining"]) >= 0
+    assert cost_response.headers["X-RateLimit-Reset"] == "60"
+
+    execute_response = client.post(
+        "/api/ai/services/super-matting/execute",
+        headers=api_headers,
+        json={
+            "image_url": "https://example.com/large-hero.png",
+            "output": "alpha_png",
+            "width": 1024,
+            "height": 1024,
+            "webhook_url": "https://example.com/webhook",
+        },
+    )
+    assert execute_response.status_code == 201
+    task = execute_response.json()
+    assert task["cost_credits"] == 10
+    assert task["billing_usage"]["deducted"] == {"daily_free": 10, "monthly": 0, "purchased": 0}
+
+    updated_billing = client.get("/api/user/billing", headers=headers).json()
+    assert updated_billing["credits"]["daily_free"] == 10
+    assert updated_billing["credits"]["total_available"] == 110
+
+    usage_response = client.get("/api/user/usage", headers=headers)
+    assert usage_response.status_code == 200
+    usage_event = usage_response.json()["events"][0]
+    assert usage_event["service"] == "super-matting"
+    assert usage_event["credits"] == 10
+    assert usage_event["task_id"] == task["task_id"]
+
+
 def create_engine_export(headers: dict[str, str], target_engine: str, name: str = "Plugin HUD") -> dict:
     project = client.post(
         "/api/projects",

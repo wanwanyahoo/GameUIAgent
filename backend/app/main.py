@@ -7,7 +7,7 @@ from secrets import token_hex
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -85,6 +85,8 @@ class ApiKeyRequest(BaseModel):
 class MattingCostRequest(BaseModel):
     image_url: str
     output: str = "alpha_png"
+    width: int = 512
+    height: int = 512
 
 
 class MattingExecuteRequest(MattingCostRequest):
@@ -124,6 +126,9 @@ store: dict[str, Any] = {
     "developer_tasks": {},
     "import_logs": {},
     "plugin_devices": {},
+    "billing_accounts": {},
+    "usage_events": {},
+    "rate_limits": {},
 }
 
 
@@ -209,6 +214,7 @@ def register(payload: RegisterRequest) -> dict[str, Any]:
         "password_hash": hash_password(payload.password),
     }
     store["users"][payload.email] = user
+    store["billing_accounts"][user["id"]] = create_billing_account(user)
     return {"id": user["id"], "email": user["email"], "name": user["name"]}
 
 
@@ -457,37 +463,71 @@ def create_api_key(payload: ApiKeyRequest, user: dict[str, Any] = Depends(curren
     return {"id": api_key["id"], "name": payload.name, "api_key": raw_key}
 
 
+@app.get("/api/user/billing")
+def get_billing(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    account = billing_account_for(user)
+    return format_billing_account(account)
+
+
+@app.get("/api/user/usage")
+def get_usage(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    events = [
+        event for event in store["usage_events"].values() if event["user_id"] == user["id"]
+    ]
+    return {"events": list(reversed(events))}
+
+
 @app.post("/api/ai/services/super-matting/cost")
 def estimate_super_matting_cost(
     payload: MattingCostRequest,
-    _: dict[str, Any] = Depends(current_api_user),
+    response: Response,
+    api_user: dict[str, Any] = Depends(current_api_user),
 ) -> dict[str, Any]:
+    apply_rate_limit_headers(api_user, response)
+    estimated_credits = estimate_matting_credits(payload.width, payload.height)
     return {
         "service": "super-matting",
-        "estimated_credits": 2,
-        "input": {"image_url": payload.image_url, "output": payload.output},
+        "estimated_credits": estimated_credits,
+        "input": {
+            "image_url": payload.image_url,
+            "output": payload.output,
+            "width": payload.width,
+            "height": payload.height,
+        },
     }
 
 
 @app.post("/api/ai/services/super-matting/execute", status_code=status.HTTP_201_CREATED)
 def execute_super_matting(
     payload: MattingExecuteRequest,
+    response: Response,
     user: dict[str, Any] = Depends(current_api_user),
 ) -> dict[str, Any]:
+    apply_rate_limit_headers(user, response)
+    cost_credits = estimate_matting_credits(payload.width, payload.height)
+    usage = deduct_credits(user, "super-matting", cost_credits)
     task = {
         "task_id": make_id("ait"),
         "user_id": user["id"],
         "service": "super-matting",
         "status": "queued",
         "progress": 0,
-        "cost_credits": 2,
-        "input": {"image_url": payload.image_url, "output": payload.output},
+        "cost_credits": cost_credits,
+        "input": {
+            "image_url": payload.image_url,
+            "output": payload.output,
+            "width": payload.width,
+            "height": payload.height,
+        },
         "webhook": {
             "url": payload.webhook_url,
             "signature_algorithm": "HMAC-SHA256",
         },
+        "billing_usage": usage,
     }
     store["developer_tasks"][task["task_id"]] = task
+    usage["task_id"] = task["task_id"]
+    store["usage_events"][usage["id"]] = usage
     return task
 
 
@@ -818,6 +858,97 @@ def build_engine_manifest(
 
 def supported_plugin_engines() -> list[str]:
     return ["unity", "cocos3", "cocos2", "godot"]
+
+
+def create_billing_account(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "user_id": user["id"],
+        "plan": {
+            "id": "pro_trial",
+            "name": "PRO Trial",
+            "api_enabled": True,
+            "rate_limit_per_minute": 60,
+            "concurrent_ai_tasks": 8,
+        },
+        "credits": {
+            "daily_free": 20,
+            "monthly": 100,
+            "purchased": 0,
+        },
+    }
+
+
+def billing_account_for(user: dict[str, Any]) -> dict[str, Any]:
+    account = store["billing_accounts"].get(user["id"])
+    if not account:
+        account = create_billing_account(user)
+        store["billing_accounts"][user["id"]] = account
+    return account
+
+
+def format_billing_account(account: dict[str, Any]) -> dict[str, Any]:
+    credits = account["credits"]
+    return {
+        "plan": account["plan"],
+        "credits": {
+            **credits,
+            "total_available": sum(credits.values()),
+            "deduction_order": ["daily_free", "monthly", "purchased"],
+        },
+        "rate_limit": {
+            "limit": account["plan"]["rate_limit_per_minute"],
+            "window_seconds": 60,
+        },
+    }
+
+
+def estimate_matting_credits(width: int, height: int) -> int:
+    max_edge = max(width, height)
+    if max_edge <= 512:
+        return 2
+    if max_edge <= 768:
+        return 5
+    if max_edge <= 1024:
+        return 10
+    if max_edge <= 1536:
+        return 15
+    return 30
+
+
+def deduct_credits(user: dict[str, Any], service: str, credits: int) -> dict[str, Any]:
+    account = billing_account_for(user)
+    balances = account["credits"]
+    if sum(balances.values()) < credits:
+        raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="INSUFFICIENT_CREDITS")
+    remaining = credits
+    deducted = {"daily_free": 0, "monthly": 0, "purchased": 0}
+    for bucket in ["daily_free", "monthly", "purchased"]:
+        amount = min(balances[bucket], remaining)
+        balances[bucket] -= amount
+        deducted[bucket] = amount
+        remaining -= amount
+        if remaining == 0:
+            break
+    return {
+        "id": make_id("use"),
+        "user_id": user["id"],
+        "service": service,
+        "credits": credits,
+        "deducted": deducted,
+    }
+
+
+def apply_rate_limit_headers(user: dict[str, Any], response: Response) -> None:
+    account = billing_account_for(user)
+    limit = account["plan"]["rate_limit_per_minute"]
+    usage = store["rate_limits"].setdefault(user["id"], 0) + 1
+    store["rate_limits"][user["id"]] = usage
+    remaining = max(limit - usage, 0)
+    response.headers["X-RateLimit-Limit"] = str(limit)
+    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    response.headers["X-RateLimit-Reset"] = "60"
+    if usage > limit:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="RATE_LIMIT_EXCEEDED")
 
 
 def safe_slug(value: str) -> str:
