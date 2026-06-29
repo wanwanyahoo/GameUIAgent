@@ -154,6 +154,13 @@ def test_studio_state_applies_corrections_and_previews_export_wizard():
         "export-package",
     ]
     assert studio["active_selection"]["selected_layer_id"] == "button_primary"
+    assert [task["kind"] for task in studio["timeline"]] == [
+        "text_to_image",
+        "ui_segmentation",
+        "unity_export",
+        "plugin_import",
+    ]
+    assert studio["timeline"][0]["status"] == "succeeded"
     assert studio["segmentation_corrections"][0]["status"] == "pending"
     assert [step["status"] for step in studio["export_wizard"]["steps"]] == [
         "complete",
@@ -168,7 +175,15 @@ def test_studio_state_applies_corrections_and_previews_export_wizard():
         headers=headers,
     )
     assert apply_response.status_code == 200
-    assert apply_response.json()["correction"]["status"] == "applied"
+    applied = apply_response.json()
+    assert applied["correction"]["status"] == "applied"
+    assert applied["updated_node"]["correction_status"] == "applied"
+    assert applied["updated_node"]["rect"] == {
+        "x": 1308,
+        "y": 808,
+        "width": 304,
+        "height": 120,
+    }
 
     wizard_response = client.post(
         f"/api/projects/{project['id']}/studio/export-wizard",
@@ -179,6 +194,37 @@ def test_studio_state_applies_corrections_and_previews_export_wizard():
     preview = wizard_response.json()
     assert preview["export_preview"]["target_engine"] == "unity"
     assert preview["export_preview"]["entry"].endswith("StudioActionsUi.prefab")
+    assert preview["export"]["status"] == "ready"
+    assert preview["studio"]["timeline"][2]["status"] == "succeeded"
+
+    plugin_response = client.get("/api/plugin/export-jobs", headers=headers)
+    assert plugin_response.status_code == 200
+    assert plugin_response.json()["jobs"][0]["id"] == preview["export"]["id"]
+
+
+def test_studio_timeline_uses_selected_engine_export_task():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Godot Studio UI",
+            "target_engine": "godot",
+            "canvas": {"width": 1280, "height": 720},
+        },
+    ).json()
+
+    state_response = client.get(f"/api/projects/{project['id']}/studio", headers=headers)
+    assert state_response.status_code == 200
+    assert state_response.json()["timeline"][2]["kind"] == "godot_export"
+
+    wizard_response = client.post(
+        f"/api/projects/{project['id']}/studio/export-wizard",
+        headers=headers,
+        json={"target_engine": "cocos3"},
+    )
+    assert wizard_response.status_code == 200
+    assert wizard_response.json()["studio"]["timeline"][2]["kind"] == "cocos3_export"
 
 
 def test_segmentation_rejects_assets_from_other_projects():

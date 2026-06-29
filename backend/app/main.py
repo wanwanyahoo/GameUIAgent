@@ -373,7 +373,14 @@ def apply_studio_correction(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Correction not found")
     correction["status"] = "applied"
     studio["active_selection"]["selected_layer_id"] = correction["target_layer_id"]
-    return {"status": "applied", "correction": correction, "studio": studio}
+    updated_node = apply_correction_to_latest_ir(project, correction)
+    studio["timeline"] = build_studio_timeline(project)
+    return {
+        "status": "applied",
+        "correction": correction,
+        "updated_node": updated_node,
+        "studio": studio,
+    }
 
 
 @app.post("/api/projects/{project_id}/studio/export-wizard")
@@ -386,14 +393,29 @@ def preview_studio_export_wizard(
     studio = ensure_studio_state(project)
     ir = latest_project_ir(project) or build_demo_ir(project)
     package = build_export_package(project, ir, payload.target_engine)
+    export = {
+        "id": make_id("exp"),
+        "project_id": project["id"],
+        "target_engine": payload.target_engine,
+        "status": "ready",
+        "package": package,
+    }
+    export["package"]["manifest"]["package_id"] = export["id"]
+    export["package"]["manifest"]["download_url"] = f"/api/plugin/exports/{export['id']}/download"
+    store["exports"][export["id"]] = export
+    studio["export_wizard"]["target_engine"] = payload.target_engine
     for step in studio["export_wizard"]["steps"]:
         if step["id"] in {"select-engine", "validate-ir"}:
             step["status"] = "complete"
         elif step["id"] == "build-package":
+            step["status"] = "complete"
+        elif step["id"] == "sync-plugin":
             step["status"] = "active"
+    studio["timeline"] = build_studio_timeline(project)
     return {
         "project_id": project["id"],
         "studio": studio,
+        "export": export,
         "export_preview": {
             "target_engine": payload.target_engine,
             "entry": package["manifest"]["entry"]["path"],
@@ -695,9 +717,66 @@ def latest_project_ir(project: dict[str, Any]) -> dict[str, Any] | None:
     return project_irs[-1] if project_irs else None
 
 
+def build_studio_timeline(project: dict[str, Any], target_engine: str | None = None) -> list[dict[str, Any]]:
+    engine = target_engine or latest_project_export_engine(project) or project["target_engine"]
+    jobs = [job for job in store["jobs"].values() if job["project_id"] == project["id"]]
+    ir_ready = latest_project_ir(project) is not None
+    export_ready = any(export["project_id"] == project["id"] for export in store["exports"].values())
+    return [
+        {
+            "kind": "text_to_image",
+            "status": "succeeded" if jobs else "queued",
+            "progress": 100 if jobs else 0,
+        },
+        {
+            "kind": "ui_segmentation",
+            "status": "succeeded" if ir_ready else "queued",
+            "progress": 100 if ir_ready else 0,
+        },
+        {
+            "kind": f"{engine}_export",
+            "status": "succeeded" if export_ready else "queued",
+            "progress": 100 if export_ready else 0,
+        },
+        {
+            "kind": "plugin_import",
+            "status": "ready" if export_ready else "queued",
+            "progress": 0,
+        },
+    ]
+
+
+def latest_project_export_engine(project: dict[str, Any]) -> str | None:
+    exports = [export for export in store["exports"].values() if export["project_id"] == project["id"]]
+    return exports[-1]["target_engine"] if exports else None
+
+
+def apply_correction_to_latest_ir(project: dict[str, Any], correction: dict[str, Any]) -> dict[str, Any]:
+    ir = latest_project_ir(project)
+    if not ir:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="IR not found")
+    node = next(
+        (item for item in ir["nodes"] if item["id"] == correction["target_layer_id"]),
+        None,
+    )
+    if not node:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found")
+    rect = node["rect"]
+    node["rect"] = {
+        "x": rect["x"] - 12,
+        "y": rect["y"] - 12,
+        "width": rect["width"] + 24,
+        "height": rect["height"] + 24,
+    }
+    node["correction_status"] = "applied"
+    node["correction_id"] = correction["id"]
+    return node
+
+
 def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
     studio = store["studio_states"].get(project["id"])
     if studio:
+        studio["timeline"] = build_studio_timeline(project, studio["export_wizard"]["target_engine"])
         return studio
     ir = latest_project_ir(project) or build_demo_ir(project)
     button_node = next((node for node in ir["nodes"] if node["type"] == "button"), ir["nodes"][0])
@@ -714,6 +793,7 @@ def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
             {"id": "apply-correction", "title": "Apply Correction", "shortcut": "A"},
             {"id": "export-package", "title": "Export Package", "shortcut": "E"},
         ],
+        "timeline": build_studio_timeline(project, project["target_engine"]),
         "segmentation_corrections": [
             {
                 "id": "correction_button_bounds",
