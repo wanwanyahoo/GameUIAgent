@@ -25,6 +25,14 @@
 
 - `docs/tasks/implementation-roadmap.md`：实现路线图与链路拆解，定义 P0-P8 阶段、交付物、依赖关系和验收 Demo。
 
+## Loops 工作流
+
+- `docs/loops/README.md`：Loops 工作流入口。
+- `docs/loops/required-skills.md`：项目必需、推荐和专项 skills 清单。
+- `docs/loops/project-workflow.md`：按项目阶段划分的 skills 启用顺序。
+- `docs/loops/skill-installation.md`：skills 检查、缺失和创建策略。
+- `scripts/loops/bootstrap.sh`：本地 Loops 启动和检查脚本。
+
 ## 推荐阅读顺序
 
 1. `docs/product/prd.md`

@@ -1,0 +1,157 @@
+{
+  "version": "1.0.0",
+  "project": "GameUIAgent",
+  "description": "Required and recommended skills for the AI game asset production platform.",
+  "skillSearchPaths": [
+    "$HOME/.trae-cn/skills",
+    "$HOME/.trae/skills",
+    ".skills",
+    "skills"
+  ],
+  "skills": [
+    {
+      "id": "brainstorming",
+      "name": "Brainstorming",
+      "category": "process",
+      "required": true,
+      "status": "installed-or-builtin",
+      "triggers": ["new feature", "behavior change", "design", "workflow"],
+      "fallback": null
+    },
+    {
+      "id": "test-driven-development",
+      "name": "Test Driven Development",
+      "category": "process",
+      "required": true,
+      "status": "installed-or-builtin",
+      "triggers": ["feature implementation", "bugfix", "tests"],
+      "fallback": null
+    },
+    {
+      "id": "git-commit",
+      "name": "Git Commit",
+      "category": "process",
+      "required": true,
+      "status": "installed-or-builtin",
+      "triggers": ["commit", "提交", "/commit"],
+      "fallback": null
+    },
+    {
+      "id": "bits-code-guard",
+      "name": "Bits Code Guard",
+      "category": "quality",
+      "required": true,
+      "status": "installed-or-builtin",
+      "triggers": ["review", "code review", "代码审查", "缺陷发现"],
+      "fallback": null
+    },
+    {
+      "id": "frontend-design",
+      "name": "Frontend Design",
+      "category": "web",
+      "required": false,
+      "status": "recommended",
+      "triggers": ["website", "landing page", "AI Studio UI", "frontend"],
+      "fallback": "taste-ui-designer"
+    },
+    {
+      "id": "fullstack-developer",
+      "name": "Fullstack Developer",
+      "category": "web",
+      "required": false,
+      "status": "recommended",
+      "triggers": ["API", "backend", "frontend", "task system"],
+      "fallback": null
+    },
+    {
+      "id": "agent-browser",
+      "name": "Agent Browser",
+      "category": "qa",
+      "required": false,
+      "status": "recommended",
+      "triggers": ["browser", "website testing", "interaction"],
+      "fallback": null
+    },
+    {
+      "id": "dogfood",
+      "name": "Dogfood",
+      "category": "qa",
+      "required": false,
+      "status": "recommended",
+      "triggers": ["QA", "exploratory test", "UX issues"],
+      "fallback": "agent-browser"
+    },
+    {
+      "id": "unity-developer",
+      "name": "Unity Developer",
+      "category": "game-engine",
+      "required": true,
+      "status": "required-custom",
+      "triggers": ["Unity", "UGUI", "Prefab", "Scene", "AssetDatabase", "TextMeshPro", "Unity UI restyle"],
+      "fallback": "fullstack-developer"
+    },
+    {
+      "id": "cocos-developer",
+      "name": "Cocos Developer",
+      "category": "game-engine",
+      "required": true,
+      "status": "required-custom",
+      "triggers": ["Cocos Creator", "Cocos 2.x", "Cocos 3.x", "Prefab", "SpriteFrame", "Editor Extension"],
+      "fallback": "fullstack-developer"
+    },
+    {
+      "id": "godot-developer",
+      "name": "Godot Developer",
+      "category": "game-engine",
+      "required": true,
+      "status": "required-custom",
+      "triggers": ["Godot", "EditorPlugin", "Control", "TextureRect", "PackedScene", "TSCN"],
+      "fallback": "fullstack-developer"
+    },
+    {
+      "id": "unreal-developer",
+      "name": "Unreal Developer",
+      "category": "game-engine",
+      "required": true,
+      "status": "required-custom",
+      "triggers": ["Unreal", "UMG", "Widget Blueprint", "Slate", "Blueprint", "C++"],
+      "fallback": "fullstack-developer"
+    },
+    {
+      "id": "game-ui-designer",
+      "name": "Game UI Designer",
+      "category": "game-asset",
+      "required": true,
+      "status": "required-custom",
+      "triggers": ["game UI", "layout", "button states", "9-slice", "theme skin", "UI spec"],
+      "fallback": "frontend-design"
+    },
+    {
+      "id": "game-art-director",
+      "name": "Game Art Director",
+      "category": "game-asset",
+      "required": true,
+      "status": "required-custom",
+      "triggers": ["game art", "art style", "icon", "character", "scene", "batch reskin"],
+      "fallback": "ai-app-designer"
+    },
+    {
+      "id": "game-ta",
+      "name": "Game Technical Artist",
+      "category": "game-asset",
+      "required": true,
+      "status": "required-custom",
+      "triggers": ["technical art", "atlas", "material", "shader", "resource pipeline", "performance"],
+      "fallback": "fullstack-developer"
+    },
+    {
+      "id": "figma",
+      "name": "Figma",
+      "category": "design-import",
+      "required": false,
+      "status": "optional",
+      "triggers": ["Figma", "design node", "variables", "assets"],
+      "fallback": "professional-ui-import-docs"
+    }
+  ]
+}
