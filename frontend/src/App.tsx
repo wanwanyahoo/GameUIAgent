@@ -8,6 +8,10 @@ import {
   platformCapabilities,
   pluginConnectionSteps,
   productionWorkflow,
+  studioAssets,
+  studioInspectorControls,
+  studioLayerTree,
+  studioTimeline,
   unityPluginFlow
 } from "./lib/platform";
 
@@ -77,23 +81,51 @@ export function App() {
           <p className="eyebrow">AI Studio</p>
           <h2>One canvas for generation, import, slicing and export.</h2>
         </div>
-        <div className="studio-layout">
+        <div className="studio-workspace">
           <div className="panel asset-panel">
-            <h3>Assets</h3>
-            <span>generated concept</span>
-            <span>button atlas</span>
-            <span>layout json</span>
+            <h3>Asset Library</h3>
+            {studioAssets.map((asset) => (
+              <span key={asset.id}>
+                {asset.title} <b>{asset.kind}</b>
+              </span>
+            ))}
+          </div>
+          <div className="panel timeline-panel">
+            <h3>Task Timeline</h3>
+            {studioTimeline.map((task) => (
+              <div className="timeline-row" key={task.id}>
+                <span>{task.title}</span>
+                <b>{task.status}</b>
+                <i style={{ inlineSize: `${Math.max(task.progress, 8)}%` }} />
+              </div>
+            ))}
           </div>
           <div className="panel studio-canvas">
             <div className="canvas-card">
               <span>Asset IR</span>
               <strong>{demoProject.ir.nodes.length} structured nodes</strong>
+              <em>Slice Editor</em>
             </div>
           </div>
-          <div className="panel inspector">
-            <h3>Export</h3>
-            <p>Unity Prefab + Scene + Sprite Atlas</p>
-            <p>Cocos and Godot packages share the same IR.</p>
+          <div className="panel layer-tree">
+            <h3>Layer Tree</h3>
+            {studioLayerTree.map((node) => (
+              <div className="layer-root" key={node.id}>
+                <span>{node.name}</span>
+                {node.children?.map((child) => (
+                  <small key={child.id}>{child.name} / {child.type}</small>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="panel inspector-panel">
+            <h3>Inspector</h3>
+            {studioInspectorControls.map((control) => (
+              <p key={control.id}>
+                <b>{control.title}</b>
+                <span>{control.value}</span>
+              </p>
+            ))}
           </div>
         </div>
       </section>

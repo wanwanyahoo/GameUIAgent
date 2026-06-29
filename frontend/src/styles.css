@@ -287,10 +287,19 @@ a {
   font-size: clamp(2.4rem, 5vw, 5rem);
 }
 
-.studio-layout {
+.studio-layout,
+.studio-workspace {
   display: grid;
-  grid-template-columns: 0.8fr 1.4fr 0.9fr;
   gap: 1rem;
+}
+
+.studio-layout {
+  grid-template-columns: 0.8fr 1.4fr 0.9fr;
+}
+
+.studio-workspace {
+  grid-template-columns: 0.78fr 0.92fr 1.45fr 0.9fr 1fr;
+  align-items: stretch;
 }
 
 .panel {
@@ -300,19 +309,54 @@ a {
 }
 
 .asset-panel,
-.inspector {
+.inspector,
+.timeline-panel,
+.layer-tree,
+.inspector-panel {
   display: grid;
   align-content: start;
   gap: 0.9rem;
 }
 
 .asset-panel span,
-.inspector p {
+.inspector p,
+.inspector-panel p,
+.layer-root,
+.timeline-row {
   margin: 0;
   padding: 0.8rem;
   color: rgba(232, 247, 255, 0.72);
   background: rgba(255, 255, 255, 0.06);
   border-radius: 0.8rem;
+}
+
+.asset-panel span {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.asset-panel b,
+.timeline-row b,
+.inspector-panel b {
+  color: #d7ff66;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.timeline-row {
+  position: relative;
+  display: grid;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.timeline-row i {
+  display: block;
+  block-size: 0.28rem;
+  background: linear-gradient(90deg, #7cf8ff, #d7ff66);
+  border-radius: 999px;
 }
 
 .studio-canvas {
@@ -336,6 +380,33 @@ a {
 
 .canvas-card strong {
   font-size: 1.6rem;
+}
+
+.canvas-card em {
+  width: fit-content;
+  padding: 0.55rem 0.75rem;
+  color: #001017;
+  background: #7cf8ff;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.layer-root {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.layer-root small {
+  padding-inline-start: 0.8rem;
+  color: rgba(232, 247, 255, 0.62);
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.inspector-panel p {
+  display: grid;
+  gap: 0.4rem;
 }
 
 .workflow,
@@ -562,6 +633,7 @@ a {
 @media (max-width: 1040px) {
   .hero,
   .studio-layout,
+  .studio-workspace,
   .workflow,
   .import-grid,
   .pipeline-grid,
@@ -591,6 +663,7 @@ a {
 
   .hero,
   .studio-layout,
+  .studio-workspace,
   .workflow,
   .import-grid,
   .pipeline-grid,

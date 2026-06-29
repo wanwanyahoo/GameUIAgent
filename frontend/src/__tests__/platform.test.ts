@@ -11,6 +11,10 @@ import {
   platformCapabilities,
   pluginConnectionSteps,
   productionWorkflow,
+  studioAssets,
+  studioInspectorControls,
+  studioLayerTree,
+  studioTimeline,
   unityPluginFlow
 } from "../lib/platform";
 
@@ -121,5 +125,17 @@ describe("platform model", () => {
     assert.equal(billingPlans.find((plan) => plan.id === "max")?.concurrentAiTasks, 20);
     assert.deepEqual(creditBuckets.map((bucket) => bucket.id), ["daily_free", "monthly", "purchased"]);
     assert.equal(creditBuckets[0]?.priority, 1);
+  });
+
+  it("models AI Studio assets, timeline, layers and inspector controls", () => {
+    assert.deepEqual(studioAssets.map((asset) => asset.kind), ["generated", "slice", "layout", "prefab"]);
+    assert.deepEqual(studioTimeline.map((task) => task.status), ["succeeded", "succeeded", "running", "queued"]);
+    assert.equal(studioLayerTree[0]?.children?.[1]?.type, "button");
+    assert.deepEqual(studioInspectorControls.map((control) => control.id), [
+      "bounds",
+      "anchor",
+      "nine-slice",
+      "binding"
+    ]);
   });
 });

@@ -65,6 +65,33 @@ export type CreditBucket = {
   detail: string;
 };
 
+export type StudioAsset = {
+  id: string;
+  title: string;
+  kind: "generated" | "slice" | "layout" | "prefab";
+  status: "ready" | "needs-review" | "exported";
+};
+
+export type StudioTimelineTask = {
+  id: string;
+  title: string;
+  status: "queued" | "running" | "succeeded";
+  progress: number;
+};
+
+export type StudioLayerNode = {
+  id: string;
+  name: string;
+  type: "canvas" | "panel" | "button" | "image" | "text";
+  children?: StudioLayerNode[];
+};
+
+export type StudioInspectorControl = {
+  id: "bounds" | "anchor" | "nine-slice" | "binding";
+  title: string;
+  value: string;
+};
+
 export type DemoTask = {
   kind: "text_to_image" | "ui_segmentation" | "unity_export" | "plugin_import";
   status: "ready" | "running" | "succeeded";
@@ -413,6 +440,115 @@ export const creditBuckets: CreditBucket[] = [
     title: "Purchased Credits",
     priority: 3,
     detail: "Never expire and are used after daily and monthly balances are depleted."
+  }
+];
+
+export const studioAssets: StudioAsset[] = [
+  {
+    id: "asset_generated",
+    title: "Generated concept",
+    kind: "generated",
+    status: "ready"
+  },
+  {
+    id: "asset_slice",
+    title: "Button atlas slice",
+    kind: "slice",
+    status: "needs-review"
+  },
+  {
+    id: "asset_layout",
+    title: "Unity layout JSON",
+    kind: "layout",
+    status: "ready"
+  },
+  {
+    id: "asset_prefab",
+    title: "MainMenu prefab",
+    kind: "prefab",
+    status: "exported"
+  }
+];
+
+export const studioTimeline: StudioTimelineTask[] = [
+  {
+    id: "timeline_generate",
+    title: "Text to Image",
+    status: "succeeded",
+    progress: 100
+  },
+  {
+    id: "timeline_segment",
+    title: "UI Segmentation",
+    status: "succeeded",
+    progress: 100
+  },
+  {
+    id: "timeline_slice",
+    title: "Slice Editor",
+    status: "running",
+    progress: 64
+  },
+  {
+    id: "timeline_export",
+    title: "Unity Export",
+    status: "queued",
+    progress: 0
+  }
+];
+
+export const studioLayerTree: StudioLayerNode[] = [
+  {
+    id: "canvas",
+    name: "Canvas",
+    type: "canvas",
+    children: [
+      {
+        id: "main_panel",
+        name: "Main Panel",
+        type: "panel"
+      },
+      {
+        id: "start_button",
+        name: "Start Button",
+        type: "button",
+        children: [
+          {
+            id: "start_label",
+            name: "Start Label",
+            type: "text"
+          }
+        ]
+      },
+      {
+        id: "hero_art",
+        name: "Hero Art",
+        type: "image"
+      }
+    ]
+  }
+];
+
+export const studioInspectorControls: StudioInspectorControl[] = [
+  {
+    id: "bounds",
+    title: "Bounds",
+    value: "x 760, y 820, w 400, h 120"
+  },
+  {
+    id: "anchor",
+    title: "Anchor",
+    value: "center / bottom"
+  },
+  {
+    id: "nine-slice",
+    title: "Nine-slice",
+    value: "24 / 24 / 24 / 24"
+  },
+  {
+    id: "binding",
+    title: "Binding",
+    value: "OnClick -> StartGame"
   }
 ];
 

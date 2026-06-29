@@ -83,4 +83,15 @@ describe("App", () => {
     assert.match(html, /GameUIAgent-inspired production platform/);
     assert.match(html, /GameUIAgent-style marketing portal/);
   });
+
+  it("renders the complete AI Studio interaction workspace", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Asset Library/);
+    assert.match(html, /Task Timeline/);
+    assert.match(html, /Layer Tree/);
+    assert.match(html, /Inspector/);
+    assert.match(html, /Slice Editor/);
+    assert.match(html, /Nine-slice/);
+  });
 });
