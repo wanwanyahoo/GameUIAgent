@@ -191,6 +191,141 @@ def test_export_paths_sanitize_project_names():
     assert "Assets/GameUIAgent/Prefabs/BadUi.prefab" in export["package"]["files"]
 
 
+def test_professional_import_converts_psd_layers_to_asset_ir():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "PSD Import UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/projects/{project['id']}/imports/professional",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "file_name": "inventory.psd",
+            "layers": [
+                {
+                    "id": "layer_bg",
+                    "name": "Background",
+                    "kind": "image",
+                    "rect": {"x": 0, "y": 0, "width": 1920, "height": 1080},
+                },
+                {
+                    "id": "layer_button",
+                    "name": "Start Button",
+                    "kind": "image",
+                    "rect": {"x": 760, "y": 820, "width": 400, "height": 120},
+                },
+                {
+                    "id": "layer_label",
+                    "name": "Start Text",
+                    "kind": "text",
+                    "text": "START",
+                    "rect": {"x": 820, "y": 850, "width": 280, "height": 60},
+                },
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    imported = response.json()
+    assert imported["design_document"]["source_type"] == "psd"
+    assert imported["design_document"]["preserved_layers"] == 3
+    assert imported["ir"]["professional_source"]["file_name"] == "inventory.psd"
+    assert [node["type"] for node in imported["ir"]["nodes"]] == [
+        "canvas",
+        "image",
+        "button",
+        "text",
+    ]
+    assert imported["ir"]["nodes"][3]["text"]["content"] == "START"
+
+
+def test_figma_import_preserves_component_and_auto_layout_metadata():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Figma Import UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1440, "height": 900},
+        },
+    ).json()
+
+    response = client.post(
+        f"/api/projects/{project['id']}/imports/professional",
+        headers=headers,
+        json={
+            "source_type": "figma",
+            "file_name": "https://figma.com/file/game-ui",
+            "frame_id": "42:100",
+            "layers": [
+                {
+                    "id": "42:101",
+                    "name": "Shop Card",
+                    "kind": "component",
+                    "component_key": "shop-card",
+                    "auto_layout": {"direction": "vertical", "gap": 12},
+                    "rect": {"x": 100, "y": 100, "width": 360, "height": 520},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 201
+    imported = response.json()
+    node = imported["ir"]["nodes"][1]
+    assert node["component"]["key"] == "shop-card"
+    assert node["layout"]["auto_layout"]["direction"] == "vertical"
+    assert imported["ir"]["professional_source"]["frame_id"] == "42:100"
+
+
+def test_developer_api_super_matting_cost_execute_poll_cancel():
+    headers = auth_headers()
+
+    key_response = client.post("/api/user/api-keys", headers=headers, json={"name": "ci"})
+    assert key_response.status_code == 201
+    api_key = key_response.json()["api_key"]
+    api_headers = {"X-API-Key": api_key}
+
+    cost_response = client.post(
+        "/api/ai/services/super-matting/cost",
+        headers=api_headers,
+        json={"image_url": "https://example.com/hero.png", "output": "alpha_png"},
+    )
+    assert cost_response.status_code == 200
+    assert cost_response.json()["estimated_credits"] == 2
+
+    execute_response = client.post(
+        "/api/ai/services/super-matting/execute",
+        headers=api_headers,
+        json={
+            "image_url": "https://example.com/hero.png",
+            "output": "alpha_png",
+            "webhook_url": "https://example.com/webhook",
+        },
+    )
+    assert execute_response.status_code == 201
+    task = execute_response.json()
+    assert task["status"] == "queued"
+    assert task["webhook"]["signature_algorithm"] == "HMAC-SHA256"
+
+    poll_response = client.get(f"/api/ai/tasks/{task['task_id']}", headers=api_headers)
+    assert poll_response.status_code == 200
+    assert poll_response.json()["status"] in {"queued", "succeeded"}
+
+    cancel_response = client.post(f"/api/ai/tasks/{task['task_id']}/cancel", headers=api_headers)
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+
+
 def test_unity_restyle_preserves_layout_bindings():
     headers = auth_headers()
     project = client.post(

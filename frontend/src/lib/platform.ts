@@ -12,6 +12,19 @@ export type WorkflowStep = {
   detail: string;
 };
 
+export type ImportSource = {
+  id: "psd" | "psb" | "figma" | "engine-snapshot";
+  title: string;
+  detail: string;
+};
+
+export type AiPipelineService = {
+  id: "text-to-image" | "image-to-image" | "inpainting" | "super-matting" | "upscale";
+  title: string;
+  apiEnabled: boolean;
+  controls: string[];
+};
+
 export type DemoTask = {
   kind: "text_to_image" | "ui_segmentation" | "unity_export" | "plugin_import";
   status: "ready" | "running" | "succeeded";
@@ -149,6 +162,62 @@ export const productionWorkflow: WorkflowStep[] = [
   }
 ];
 
+export const importSources: ImportSource[] = [
+  {
+    id: "psd",
+    title: "PSD layers",
+    detail: "Layer groups, image layers, text layers, visibility, opacity and coordinates."
+  },
+  {
+    id: "psb",
+    title: "PSB large files",
+    detail: "Large Photoshop documents keep the same Design Layer Document pipeline."
+  },
+  {
+    id: "figma",
+    title: "Figma frames",
+    detail: "Frames, components, instances, constraints, Auto Layout and image fills."
+  },
+  {
+    id: "engine-snapshot",
+    title: "Engine snapshots",
+    detail: "Unity prefabs and scenes can return to AI Studio as editable layout IR."
+  }
+];
+
+export const aiPipelineServices: AiPipelineService[] = [
+  {
+    id: "text-to-image",
+    title: "Text to Image",
+    apiEnabled: false,
+    controls: ["prompt", "style", "seed", "size"]
+  },
+  {
+    id: "image-to-image",
+    title: "Image to Image",
+    apiEnabled: false,
+    controls: ["reference", "strength", "style"]
+  },
+  {
+    id: "inpainting",
+    title: "Inpainting",
+    apiEnabled: false,
+    controls: ["mask", "prompt", "denoise"]
+  },
+  {
+    id: "super-matting",
+    title: "Super Matting",
+    apiEnabled: true,
+    controls: ["Cost", "Execute", "Poll", "Cancel", "Webhook"]
+  },
+  {
+    id: "upscale",
+    title: "Upscale",
+    apiEnabled: false,
+    controls: ["scale", "quality", "artifact removal"]
+  }
+];
+
 export function createDemoProject(name: string, targetEngine: EngineTarget): DemoProject {
   return {
     name,
@@ -171,4 +240,3 @@ export function createDemoProject(name: string, targetEngine: EngineTarget): Dem
     }
   };
 }
-

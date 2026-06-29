@@ -61,6 +61,36 @@ class RestyleRequest(BaseModel):
     theme_name: str
 
 
+class ProfessionalLayer(BaseModel):
+    id: str
+    name: str
+    kind: str
+    rect: dict[str, int]
+    text: str | None = None
+    component_key: str | None = None
+    auto_layout: dict[str, Any] | None = None
+
+
+class ProfessionalImportRequest(BaseModel):
+    source_type: str
+    file_name: str
+    layers: list[ProfessionalLayer]
+    frame_id: str | None = None
+
+
+class ApiKeyRequest(BaseModel):
+    name: str
+
+
+class MattingCostRequest(BaseModel):
+    image_url: str
+    output: str = "alpha_png"
+
+
+class MattingExecuteRequest(MattingCostRequest):
+    webhook_url: str | None = None
+
+
 store: dict[str, Any] = {
     "users": {},
     "tokens": {},
@@ -70,6 +100,9 @@ store: dict[str, Any] = {
     "irs": {},
     "exports": {},
     "snapshots": {},
+    "imports": {},
+    "api_keys": {},
+    "developer_tasks": {},
 }
 
 
@@ -107,6 +140,13 @@ def current_user(authorization: str = Header(default="")) -> dict[str, Any]:
     return store["users"][store["tokens"][token]]
 
 
+def current_api_user(x_api_key: str = Header(default="", alias="X-API-Key")) -> dict[str, Any]:
+    api_key = store["api_keys"].get(x_api_key)
+    if not api_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return api_key["user"]
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -126,6 +166,8 @@ def marketing_capabilities() -> dict[str, Any]:
         ("cocos-export", "Cocos Export", "Export Cocos 2.x/3.x prefabs and scenes."),
         ("godot-export", "Godot Export", "Export Godot 4 control scenes."),
         ("engine-mcp", "Engine MCP", "Connect editor plugins with platform automation."),
+        ("professional-import", "PSD / PSB / Figma Import", "Preserve professional design layers."),
+        ("developer-api", "Developer API", "API keys, webhook, polling, cancellation and cost estimates."),
     ]
     return {
         "capabilities": [
@@ -228,6 +270,28 @@ def create_segmentation(
     return {"id": make_id("seg"), "project_id": project["id"], "source_asset_id": payload.asset_id, "ir": ir}
 
 
+@app.post("/api/projects/{project_id}/imports/professional", status_code=status.HTTP_201_CREATED)
+def create_professional_import(
+    project_id: str,
+    payload: ProfessionalImportRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    if payload.source_type not in {"psd", "psb", "figma"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported source type")
+    design_document = build_design_document(project, payload)
+    ir = build_ir_from_design_document(project, design_document)
+    store["irs"][ir["id"]] = ir
+    imported = {
+        "id": make_id("imp"),
+        "project_id": project["id"],
+        "design_document": design_document,
+        "ir": ir,
+    }
+    store["imports"][imported["id"]] = imported
+    return imported
+
+
 @app.post("/api/projects/{project_id}/exports", status_code=status.HTTP_201_CREATED)
 def create_export(
     project_id: str,
@@ -256,6 +320,63 @@ def plugin_export_jobs(user: dict[str, Any] = Depends(current_user)) -> dict[str
     }
     jobs = [export for export in store["exports"].values() if export["project_id"] in owned_projects]
     return {"jobs": jobs}
+
+
+@app.post("/api/user/api-keys", status_code=status.HTTP_201_CREATED)
+def create_api_key(payload: ApiKeyRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, str]:
+    raw_key = f"guk_{token_hex(24)}"
+    api_key = {"id": make_id("key"), "name": payload.name, "user": user}
+    store["api_keys"][raw_key] = api_key
+    return {"id": api_key["id"], "name": payload.name, "api_key": raw_key}
+
+
+@app.post("/api/ai/services/super-matting/cost")
+def estimate_super_matting_cost(
+    payload: MattingCostRequest,
+    _: dict[str, Any] = Depends(current_api_user),
+) -> dict[str, Any]:
+    return {
+        "service": "super-matting",
+        "estimated_credits": 2,
+        "input": {"image_url": payload.image_url, "output": payload.output},
+    }
+
+
+@app.post("/api/ai/services/super-matting/execute", status_code=status.HTTP_201_CREATED)
+def execute_super_matting(
+    payload: MattingExecuteRequest,
+    user: dict[str, Any] = Depends(current_api_user),
+) -> dict[str, Any]:
+    task = {
+        "task_id": make_id("ait"),
+        "user_id": user["id"],
+        "service": "super-matting",
+        "status": "queued",
+        "progress": 0,
+        "cost_credits": 2,
+        "input": {"image_url": payload.image_url, "output": payload.output},
+        "webhook": {
+            "url": payload.webhook_url,
+            "signature_algorithm": "HMAC-SHA256",
+        },
+    }
+    store["developer_tasks"][task["task_id"]] = task
+    return task
+
+
+@app.get("/api/ai/tasks/{task_id}")
+def get_ai_task(task_id: str, user: dict[str, Any] = Depends(current_api_user)) -> dict[str, Any]:
+    task = require_developer_task(task_id, user)
+    return task
+
+
+@app.post("/api/ai/tasks/{task_id}/cancel")
+def cancel_ai_task(task_id: str, user: dict[str, Any] = Depends(current_api_user)) -> dict[str, Any]:
+    task = require_developer_task(task_id, user)
+    if task["status"] not in {"succeeded", "failed"}:
+        task["status"] = "cancelled"
+        task["progress"] = 0
+    return task
 
 
 @app.post("/api/projects/{project_id}/engine-snapshots", status_code=status.HTTP_201_CREATED)
@@ -323,6 +444,13 @@ def require_project(project_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return project
 
 
+def require_developer_task(task_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    task = store["developer_tasks"].get(task_id)
+    if not task or task["user_id"] != user["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return task
+
+
 def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
     width = project["canvas"]["width"]
     height = project["canvas"]["height"]
@@ -340,6 +468,73 @@ def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
             {"id": "title_text", "type": "text", "name": "Screen Title", "rect": {"x": 320, "y": 150, "width": 640, "height": 72}},
         ],
     }
+
+
+def build_design_document(project: dict[str, Any], payload: ProfessionalImportRequest) -> dict[str, Any]:
+    return {
+        "id": make_id("dld"),
+        "project_id": project["id"],
+        "source_type": payload.source_type,
+        "file_name": payload.file_name,
+        "frame_id": payload.frame_id,
+        "preserved_layers": len(payload.layers),
+        "layers": [layer.model_dump() for layer in payload.layers],
+    }
+
+
+def build_ir_from_design_document(project: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+    nodes = [
+        {
+            "id": "root",
+            "type": "canvas",
+            "name": project["name"],
+            "rect": {"x": 0, "y": 0, "width": project["canvas"]["width"], "height": project["canvas"]["height"]},
+        }
+    ]
+    for layer in document["layers"]:
+        node_type = layer_type_to_node_type(layer)
+        node = {
+            "id": layer["id"],
+            "type": node_type,
+            "name": layer["name"],
+            "rect": layer["rect"],
+            "professional_source": {
+                "source_type": document["source_type"],
+                "layer_id": layer["id"],
+            },
+        }
+        if layer.get("text"):
+            node["text"] = {"content": layer["text"]}
+        if layer.get("component_key"):
+            node["component"] = {"key": layer["component_key"]}
+        if layer.get("auto_layout"):
+            node["layout"] = {"auto_layout": layer["auto_layout"]}
+        nodes.append(node)
+    return {
+        "id": make_id("ir"),
+        "project_id": project["id"],
+        "version": "0.1.0",
+        "engine_targets": ["unity", "cocos", "godot"],
+        "canvas": project["canvas"],
+        "professional_source": {
+            "source_type": document["source_type"],
+            "file_name": document["file_name"],
+            "frame_id": document["frame_id"],
+            "design_document_id": document["id"],
+        },
+        "nodes": nodes,
+    }
+
+
+def layer_type_to_node_type(layer: dict[str, Any]) -> str:
+    name = layer["name"].lower()
+    if layer["kind"] == "text":
+        return "text"
+    if "button" in name:
+        return "button"
+    if layer["kind"] == "component":
+        return "component"
+    return "image"
 
 
 def build_export_package(project: dict[str, Any], target_engine: str) -> dict[str, Any]:

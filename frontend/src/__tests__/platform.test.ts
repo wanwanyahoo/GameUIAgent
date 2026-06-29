@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { createDemoProject, platformCapabilities, productionWorkflow } from "../lib/platform";
+import {
+  aiPipelineServices,
+  createDemoProject,
+  importSources,
+  platformCapabilities,
+  productionWorkflow
+} from "../lib/platform";
 
 describe("platform model", () => {
   it("covers the complete replicated capability set", () => {
@@ -51,5 +57,17 @@ describe("platform model", () => {
       "Export Engine Package",
       "Import Through Plugin"
     ]);
+  });
+
+  it("models professional imports and developer AI services", () => {
+    assert.deepEqual(importSources.map((source) => source.id), ["psd", "psb", "figma", "engine-snapshot"]);
+    assert.deepEqual(aiPipelineServices.map((service) => service.id), [
+      "text-to-image",
+      "image-to-image",
+      "inpainting",
+      "super-matting",
+      "upscale"
+    ]);
+    assert.equal(aiPipelineServices.find((service) => service.id === "super-matting")?.apiEnabled, true);
   });
 });

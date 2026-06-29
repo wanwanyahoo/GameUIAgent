@@ -21,4 +21,15 @@ describe("App", () => {
     assert.match(html, /Structure as Asset IR/);
     assert.match(html, /Import Through Plugin/);
   });
+
+  it("renders professional import and AI pipeline sections", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Professional imports/);
+    assert.match(html, /PSD layers/);
+    assert.match(html, /Figma frames/);
+    assert.match(html, /Developer API pipeline/);
+    assert.match(html, /Webhook/);
+    assert.match(html, /Cancel/);
+  });
 });

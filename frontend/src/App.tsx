@@ -1,4 +1,10 @@
-import { createDemoProject, platformCapabilities, productionWorkflow } from "./lib/platform";
+import {
+  aiPipelineServices,
+  createDemoProject,
+  importSources,
+  platformCapabilities,
+  productionWorkflow
+} from "./lib/platform";
 
 const demoProject = createDemoProject("Cyberpunk RPG UI", "unity");
 
@@ -98,6 +104,44 @@ export function App() {
               <span>{String(index + 1).padStart(2, "0")}</span>
               <h3>{step.title}</h3>
               <p>{step.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section split-section" id="imports">
+        <div className="section-heading">
+          <p className="eyebrow">Professional imports</p>
+          <h2>PSD, PSB, Figma and engine snapshots become structured Asset IR.</h2>
+        </div>
+        <div className="import-grid">
+          {importSources.map((source) => (
+            <article className="import-card" key={source.id}>
+              <span>{source.id}</span>
+              <h3>{source.title}</h3>
+              <p>{source.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section split-section" id="api-pipeline">
+        <div className="section-heading">
+          <p className="eyebrow">Developer API pipeline</p>
+          <h2>AI services expose cost estimates, queued execution, polling, Cancel and Webhook hooks.</h2>
+        </div>
+        <div className="pipeline-grid">
+          {aiPipelineServices.map((service) => (
+            <article className="pipeline-card" key={service.id}>
+              <div>
+                <span>{service.apiEnabled ? "API enabled" : "Studio flow"}</span>
+                <h3>{service.title}</h3>
+              </div>
+              <div className="control-row">
+                {service.controls.map((control) => (
+                  <b key={control}>{control}</b>
+                ))}
+              </div>
             </article>
           ))}
         </div>

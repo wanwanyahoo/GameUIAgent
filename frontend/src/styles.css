@@ -339,7 +339,9 @@ a {
 }
 
 .workflow,
-.capability-grid {
+.capability-grid,
+.import-grid,
+.pipeline-grid {
   display: grid;
   gap: 1rem;
 }
@@ -349,14 +351,18 @@ a {
 }
 
 .workflow-step,
-.capability-card {
+.capability-card,
+.import-card,
+.pipeline-card {
   min-height: 220px;
   padding: 1rem;
   border-radius: 1.2rem;
 }
 
 .workflow-step span,
-.capability-card span {
+.capability-card span,
+.import-card span,
+.pipeline-card span {
   color: #7cf8ff;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.74rem;
@@ -364,18 +370,56 @@ a {
 }
 
 .workflow-step h3,
-.capability-card h3 {
+.capability-card h3,
+.import-card h3,
+.pipeline-card h3 {
   margin: 1rem 0 0.7rem;
 }
 
 .workflow-step p,
-.capability-card p {
+.capability-card p,
+.import-card p {
   color: rgba(232, 247, 255, 0.68);
   line-height: 1.6;
 }
 
 .capability-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.import-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.import-card,
+.pipeline-card {
+  border: 1px solid rgba(215, 255, 102, 0.18);
+  background: linear-gradient(145deg, rgba(18, 28, 20, 0.82), rgba(5, 8, 14, 0.86));
+}
+
+.pipeline-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.pipeline-card {
+  display: grid;
+  align-content: space-between;
+  gap: 1rem;
+}
+
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.control-row b {
+  padding: 0.42rem 0.55rem;
+  color: #001017;
+  background: #d7ff66;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
 }
 
 .pricing {
@@ -391,6 +435,8 @@ a {
   .hero,
   .studio-layout,
   .workflow,
+  .import-grid,
+  .pipeline-grid,
   .capability-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -413,6 +459,8 @@ a {
   .hero,
   .studio-layout,
   .workflow,
+  .import-grid,
+  .pipeline-grid,
   .capability-grid {
     grid-template-columns: 1fr;
   }
@@ -426,4 +474,3 @@ a {
     flex-direction: column;
   }
 }
-
