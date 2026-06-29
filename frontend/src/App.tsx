@@ -1,6 +1,7 @@
 import {
   aiPipelineServices,
   createDemoProject,
+  engineExportTargets,
   importSources,
   platformCapabilities,
   productionWorkflow,
@@ -163,6 +164,28 @@ export function App() {
               <div className="control-row">
                 {step.outputs.map((output) => (
                   <b key={output}>{output}</b>
+                ))}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" id="engine-matrix">
+        <div className="section-heading">
+          <p className="eyebrow">Multi-engine export matrix</p>
+          <h2>One Asset IR now emits native import plans for Unity, Cocos and Godot.</h2>
+        </div>
+        <div className="engine-matrix">
+          {engineExportTargets.map((target) => (
+            <article className="engine-card" key={target.id}>
+              <span>{target.id}</span>
+              <h3>{target.title}</h3>
+              <p>{target.entry}</p>
+              <small>Engine version: {target.engineVersion}</small>
+              <div className="control-row">
+                {target.importSteps.map((step) => (
+                  <b key={step}>{step}</b>
                 ))}
               </div>
             </article>

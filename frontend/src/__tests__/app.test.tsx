@@ -43,4 +43,15 @@ describe("App", () => {
     assert.match(html, /Replacement manifest/);
     assert.match(html, /preserve RectTransform/);
   });
+
+  it("renders the multi-engine export matrix", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Multi-engine export matrix/);
+    assert.match(html, /Unity 2022.3\+/);
+    assert.match(html, /Cocos Creator 3.8.6\+/);
+    assert.match(html, /Cocos Creator 2.4.x\+/);
+    assert.match(html, /Godot 4.x/);
+    assert.match(html, /write_tscn_scene/);
+  });
 });

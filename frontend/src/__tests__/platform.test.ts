@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   aiPipelineServices,
   createDemoProject,
+  engineExportTargets,
   importSources,
   platformCapabilities,
   productionWorkflow,
@@ -85,6 +86,18 @@ describe("platform model", () => {
       "preserve RectTransform",
       "node path mapping",
       "replacement sprites"
+    ]);
+  });
+
+  it("models native export plans for Unity, Cocos and Godot", () => {
+    assert.deepEqual(engineExportTargets.map((target) => target.id), ["unity", "cocos3", "cocos2", "godot"]);
+    assert.equal(engineExportTargets.find((target) => target.id === "cocos3")?.entry, "Cocos3 prefab");
+    assert.equal(engineExportTargets.find((target) => target.id === "godot")?.engineVersion, "4.x");
+    assert.deepEqual(engineExportTargets.find((target) => target.id === "cocos2")?.importSteps, [
+      "copy_textures",
+      "create_sprite_frames",
+      "create_prefab",
+      "write_import_log"
     ]);
   });
 });

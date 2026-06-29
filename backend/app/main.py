@@ -637,6 +637,73 @@ def build_export_package(project: dict[str, Any], ir: dict[str, Any], target_eng
             "files": files,
             "manifest": manifest,
         }
+    if target_engine in {"cocos", "cocos3"}:
+        files = [
+            f"Cocos3/assets/vberai/textures/{slug}_atlas.png",
+            f"Cocos3/assets/vberai/prefabs/{slug}.prefab",
+            f"Cocos3/assets/vberai/scenes/{slug}.scene",
+            f"Cocos3/assets/vberai/metadata/{slug}.json",
+        ]
+        manifest = build_engine_manifest(
+            project=project,
+            ir=ir,
+            engine="cocos3",
+            engine_version="3.8.6+",
+            entry_type="prefab",
+            entry_path=files[1],
+            files=files,
+            import_plan={
+                "root": "Cocos3/assets/vberai",
+                "steps": [
+                    "copy_textures",
+                    "create_sprite_frames",
+                    "create_prefab",
+                    "create_scene",
+                    "write_import_log",
+                ],
+            },
+        )
+        return {"kind": "cocos3_package", "files": files, "manifest": manifest}
+    if target_engine == "cocos2":
+        files = [
+            f"Cocos2/assets/resources/vberai/textures/{slug}_atlas.png",
+            f"Cocos2/assets/resources/vberai/prefabs/{slug}.prefab",
+            f"Cocos2/assets/resources/vberai/metadata/{slug}.json",
+        ]
+        manifest = build_engine_manifest(
+            project=project,
+            ir=ir,
+            engine="cocos2",
+            engine_version="2.4.x+",
+            entry_type="prefab",
+            entry_path=files[1],
+            files=files,
+            import_plan={
+                "root": "Cocos2/assets/resources/vberai",
+                "steps": ["copy_textures", "create_sprite_frames", "create_prefab", "write_import_log"],
+            },
+        )
+        return {"kind": "cocos2_package", "files": files, "manifest": manifest}
+    if target_engine == "godot":
+        files = [
+            f"Godot/vberai/textures/{slug}_atlas.png",
+            f"Godot/vberai/scenes/{slug}.tscn",
+            f"Godot/vberai/metadata/{slug}.json",
+        ]
+        manifest = build_engine_manifest(
+            project=project,
+            ir=ir,
+            engine="godot",
+            engine_version="4.x",
+            entry_type="scene",
+            entry_path=files[1],
+            files=files,
+            import_plan={
+                "root": "Godot/vberai",
+                "steps": ["copy_textures", "write_tscn_scene", "refresh_filesystem", "write_import_log"],
+            },
+        )
+        return {"kind": "godot_package", "files": files, "manifest": manifest}
     return {
         "kind": f"{target_engine}_package",
         "files": [f"exports/{target_engine}/{slug}/manifest.json"],
@@ -649,6 +716,30 @@ def build_export_package(project: dict[str, Any], ir: dict[str, Any], target_eng
             "download_url": "",
             "checksum": f"sha256:{target_engine}-{slug.lower()}",
         },
+    }
+
+
+def build_engine_manifest(
+    project: dict[str, Any],
+    ir: dict[str, Any],
+    engine: str,
+    engine_version: str,
+    entry_type: str,
+    entry_path: str,
+    files: list[str],
+    import_plan: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "package_id": "",
+        "project_id": project["id"],
+        "ir_id": ir["id"],
+        "engine": engine,
+        "engine_version": engine_version,
+        "entry": {"type": entry_type, "path": entry_path},
+        "download_url": "",
+        "checksum": f"sha256:{engine}-{safe_slug(project['name']).lower()}",
+        "assets": [{"path": file_path, "kind": engine_asset_kind(file_path)} for file_path in files],
+        "import_plan": import_plan,
     }
 
 
@@ -666,6 +757,17 @@ def unity_asset_kind(file_path: str) -> str:
     if "/Scenes/" in file_path:
         return "scene"
     return "manifest"
+
+
+def engine_asset_kind(file_path: str) -> str:
+    normalized = file_path.lower()
+    if "/textures/" in normalized:
+        return "texture"
+    if "/prefabs/" in normalized:
+        return "prefab"
+    if "/scenes/" in normalized:
+        return "scene"
+    return "metadata"
 
 
 def matching_layout_node(snapshot: dict[str, Any], sprite: dict[str, Any]) -> dict[str, Any]:

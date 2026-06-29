@@ -33,6 +33,14 @@ export type UnityPluginStep = {
   outputs: string[];
 };
 
+export type EngineExportTarget = {
+  id: "unity" | "cocos3" | "cocos2" | "godot";
+  title: string;
+  engineVersion: string;
+  entry: string;
+  importSteps: string[];
+};
+
 export type DemoTask = {
   kind: "text_to_image" | "ui_segmentation" | "unity_export" | "plugin_import";
   status: "ready" | "running" | "succeeded";
@@ -254,6 +262,37 @@ export const unityPluginFlow: UnityPluginStep[] = [
     apiPath: "/api/plugin/engine-snapshots/{snapshot_id}/restyle",
     detail: "Existing Unity UI keeps layout and script bindings while sprites are restyled.",
     outputs: ["preserve RectTransform", "node path mapping", "replacement sprites"]
+  }
+];
+
+export const engineExportTargets: EngineExportTarget[] = [
+  {
+    id: "unity",
+    title: "Unity 2022.3+",
+    engineVersion: "2022.3+",
+    entry: "Unity prefab",
+    importSteps: ["extract_zip", "import_textures_as_sprites", "create_prefab", "create_scene", "write_import_log"]
+  },
+  {
+    id: "cocos3",
+    title: "Cocos Creator 3.8.6+",
+    engineVersion: "3.8.6+",
+    entry: "Cocos3 prefab",
+    importSteps: ["copy_textures", "create_sprite_frames", "create_prefab", "create_scene", "write_import_log"]
+  },
+  {
+    id: "cocos2",
+    title: "Cocos Creator 2.4.x+",
+    engineVersion: "2.4.x+",
+    entry: "Cocos2 prefab",
+    importSteps: ["copy_textures", "create_sprite_frames", "create_prefab", "write_import_log"]
+  },
+  {
+    id: "godot",
+    title: "Godot 4.x",
+    engineVersion: "4.x",
+    entry: "Godot TSCN scene",
+    importSteps: ["copy_textures", "write_tscn_scene", "refresh_filesystem", "write_import_log"]
   }
 ];
 

@@ -326,13 +326,13 @@ def test_developer_api_super_matting_cost_execute_poll_cancel():
     assert cancel_response.json()["status"] == "cancelled"
 
 
-def create_unity_export(headers: dict[str, str], name: str = "Plugin HUD") -> dict:
+def create_engine_export(headers: dict[str, str], target_engine: str, name: str = "Plugin HUD") -> dict:
     project = client.post(
         "/api/projects",
         headers=headers,
         json={
             "name": name,
-            "target_engine": "unity",
+            "target_engine": target_engine,
             "canvas": {"width": 1920, "height": 1080},
         },
     ).json()
@@ -349,9 +349,13 @@ def create_unity_export(headers: dict[str, str], name: str = "Plugin HUD") -> di
     export = client.post(
         f"/api/projects/{project['id']}/exports",
         headers=headers,
-        json={"ir_id": segmentation["ir"]["id"], "target_engine": "unity"},
+        json={"ir_id": segmentation["ir"]["id"], "target_engine": target_engine},
     ).json()
     return {"project": project, "export": export}
+
+
+def create_unity_export(headers: dict[str, str], name: str = "Plugin HUD") -> dict:
+    return create_engine_export(headers, "unity", name)
 
 
 def test_unity_plugin_manifest_download_and_import_log_flow():
@@ -403,6 +407,42 @@ def test_unity_plugin_manifest_download_and_import_log_flow():
     )
     assert log_response.status_code == 201
     assert log_response.json()["summary"]["prefabs_created"] == 1
+
+
+def test_multi_engine_exports_have_native_manifest_import_plans():
+    headers = auth_headers()
+    cases = [
+        (
+            "cocos3",
+            "Cocos3/assets/vberai/prefabs/PluginHud.prefab",
+            "3.8.6+",
+            ["copy_textures", "create_sprite_frames", "create_prefab", "create_scene", "write_import_log"],
+        ),
+        (
+            "cocos2",
+            "Cocos2/assets/resources/vberai/prefabs/PluginHud.prefab",
+            "2.4.x+",
+            ["copy_textures", "create_sprite_frames", "create_prefab", "write_import_log"],
+        ),
+        (
+            "godot",
+            "Godot/vberai/scenes/PluginHud.tscn",
+            "4.x",
+            ["copy_textures", "write_tscn_scene", "refresh_filesystem", "write_import_log"],
+        ),
+    ]
+
+    for engine, entry_path, engine_version, steps in cases:
+        export_id = create_engine_export(headers, engine)["export"]["id"]
+        manifest_response = client.get(f"/api/plugin/exports/{export_id}/manifest", headers=headers)
+
+        assert manifest_response.status_code == 200
+        manifest = manifest_response.json()
+        assert manifest["engine"] == engine
+        assert manifest["engine_version"] == engine_version
+        assert manifest["entry"]["path"] == entry_path
+        assert manifest["import_plan"]["steps"] == steps
+        assert any(asset["kind"] == "texture" for asset in manifest["assets"])
 
 
 def test_plugin_cannot_read_other_users_export_manifest():
