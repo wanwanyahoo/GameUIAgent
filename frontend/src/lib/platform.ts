@@ -84,7 +84,7 @@ export const platformCapabilities: Capability[] = [
   {
     id: "official-site",
     title: "Official Site",
-    summary: "VberAI-style marketing portal, product routes, pricing and conversion CTAs.",
+    summary: "GameUIAgent-style marketing portal, product routes, pricing and conversion CTAs.",
     group: "website"
   },
   {

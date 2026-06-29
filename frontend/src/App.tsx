@@ -34,7 +34,7 @@ export function App() {
 
       <section id="top" className="hero">
         <div className="hero-copy">
-          <p className="eyebrow">VberAI-inspired production platform</p>
+          <p className="eyebrow">GameUIAgent-inspired production platform</p>
           <h1>AI Game Asset Production from concept to engine import.</h1>
           <p className="hero-subtitle">
             Replicate the official site experience and extend it into a complete AI Studio for

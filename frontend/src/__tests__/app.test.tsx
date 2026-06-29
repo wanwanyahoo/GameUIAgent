@@ -75,4 +75,12 @@ describe("App", () => {
     assert.match(html, /PRO/);
     assert.match(html, /X-RateLimit-Limit/);
   });
+
+  it("rebrands visible VberAI references to GameUIAgent", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.doesNotMatch(html, /VberAI/);
+    assert.match(html, /GameUIAgent-inspired production platform/);
+    assert.match(html, /GameUIAgent-style marketing portal/);
+  });
 });
