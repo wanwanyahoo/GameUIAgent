@@ -54,4 +54,14 @@ describe("App", () => {
     assert.match(html, /Godot 4.x/);
     assert.match(html, /write_tscn_scene/);
   });
+
+  it("renders the engine plugin connection sequence", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Engine plugin connection/);
+    assert.match(html, /Plugin Auth/);
+    assert.match(html, /Project Sync/);
+    assert.match(html, /Export Query/);
+    assert.match(html, /Package Download/);
+  });
 });

@@ -455,6 +455,45 @@ def test_plugin_cannot_read_other_users_export_manifest():
     assert response.status_code == 404
 
 
+def test_plugin_auth_lists_projects_and_project_exports():
+    headers = auth_headers()
+    unity_created = create_unity_export(headers, "Plugin Portal")
+    godot_created = create_engine_export(headers, "godot", "Plugin Portal Godot")
+    web_token = headers["Authorization"].split(" ", 1)[1]
+
+    auth_response = client.post(
+        "/api/plugin/auth",
+        json={
+            "token": web_token,
+            "engine": "unity",
+            "engine_version": "2022.3.40f1",
+            "plugin_version": "0.1.0",
+            "device_name": "MacBook Pro",
+        },
+    )
+    assert auth_response.status_code == 200
+    plugin_token = auth_response.json()["access_token"]
+    plugin_headers = {"Authorization": f"Bearer {plugin_token}"}
+
+    projects_response = client.get("/api/plugin/projects", headers=plugin_headers)
+    assert projects_response.status_code == 200
+    projects = projects_response.json()["projects"]
+    assert {project["id"] for project in projects} == {
+        unity_created["project"]["id"],
+        godot_created["project"]["id"],
+    }
+    assert projects[0]["target_engines"] == ["unity", "cocos3", "cocos2", "godot"]
+
+    exports_response = client.get(
+        f"/api/plugin/projects/{unity_created['project']['id']}/exports?engine=unity",
+        headers=plugin_headers,
+    )
+    assert exports_response.status_code == 200
+    exports = exports_response.json()["exports"]
+    assert [export["id"] for export in exports] == [unity_created["export"]["id"]]
+    assert exports[0]["manifest_url"] == f"/api/plugin/exports/{unity_created['export']['id']}/manifest"
+
+
 def test_unity_restyle_preserves_layout_bindings():
     headers = auth_headers()
     project = client.post(

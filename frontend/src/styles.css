@@ -343,7 +343,8 @@ a {
 .import-grid,
 .pipeline-grid,
 .unity-flow,
-.engine-matrix {
+.engine-matrix,
+.connection-lane {
   display: grid;
   gap: 1rem;
 }
@@ -357,7 +358,8 @@ a {
 .import-card,
 .pipeline-card,
 .unity-step,
-.engine-card {
+.engine-card,
+.connection-step {
   min-height: 220px;
   padding: 1rem;
   border-radius: 1.2rem;
@@ -368,7 +370,8 @@ a {
 .import-card span,
 .pipeline-card span,
 .unity-step span,
-.engine-card span {
+.engine-card span,
+.connection-step span {
   color: #7cf8ff;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.74rem;
@@ -380,7 +383,8 @@ a {
 .import-card h3,
 .pipeline-card h3,
 .unity-step h3,
-.engine-card h3 {
+.engine-card h3,
+.connection-step h3 {
   margin: 1rem 0 0.7rem;
 }
 
@@ -388,7 +392,8 @@ a {
 .capability-card p,
 .import-card p,
 .unity-step p,
-.engine-card p {
+.engine-card p,
+.connection-step p {
   color: rgba(232, 247, 255, 0.68);
   line-height: 1.6;
 }
@@ -458,6 +463,26 @@ a {
   font-family: "IBM Plex Mono", monospace;
 }
 
+.connection-lane {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.connection-step {
+  border: 1px solid rgba(124, 248, 255, 0.2);
+  background: linear-gradient(145deg, rgba(10, 20, 32, 0.9), rgba(5, 8, 14, 0.88));
+}
+
+.connection-step code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 0.62rem;
+  color: #d7ff66;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 0.75rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
 .control-row {
   display: flex;
   flex-wrap: wrap;
@@ -490,6 +515,7 @@ a {
   .pipeline-grid,
   .unity-flow,
   .engine-matrix,
+  .connection-lane,
   .capability-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -516,6 +542,7 @@ a {
   .pipeline-grid,
   .unity-flow,
   .engine-matrix,
+  .connection-lane,
   .capability-grid {
     grid-template-columns: 1fr;
   }

@@ -102,6 +102,14 @@ class PluginImportLogRequest(BaseModel):
     logs: list[dict[str, str]]
 
 
+class PluginAuthRequest(BaseModel):
+    token: str
+    engine: str
+    engine_version: str
+    plugin_version: str
+    device_name: str
+
+
 store: dict[str, Any] = {
     "users": {},
     "tokens": {},
@@ -115,6 +123,7 @@ store: dict[str, Any] = {
     "api_keys": {},
     "developer_tasks": {},
     "import_logs": {},
+    "plugin_devices": {},
 }
 
 
@@ -334,6 +343,70 @@ def plugin_export_jobs(user: dict[str, Any] = Depends(current_user)) -> dict[str
     }
     jobs = [export for export in store["exports"].values() if export["project_id"] in owned_projects]
     return {"jobs": jobs}
+
+
+@app.post("/api/plugin/auth")
+def plugin_auth(payload: PluginAuthRequest) -> dict[str, Any]:
+    email = store["tokens"].get(payload.token)
+    if not email:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid plugin token")
+    user = store["users"][email]
+    access_token = make_id("ptok")
+    device = {
+        "id": make_id("dev"),
+        "user_id": user["id"],
+        "engine": payload.engine,
+        "engine_version": payload.engine_version,
+        "plugin_version": payload.plugin_version,
+        "device_name": payload.device_name,
+    }
+    store["plugin_devices"][device["id"]] = device
+    store["tokens"][access_token] = email
+    return {
+        "access_token": access_token,
+        "expires_in": 3600,
+        "user": {"id": user["id"], "name": user["name"]},
+        "device": device,
+    }
+
+
+@app.get("/api/plugin/projects")
+def plugin_projects(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    return {
+        "projects": [
+            {
+                "id": project["id"],
+                "name": project["name"],
+                "target_engines": supported_plugin_engines(),
+                "updated_at": "2026-06-29T00:00:00Z",
+            }
+            for project in store["projects"].values()
+            if project["owner_id"] == user["id"]
+        ]
+    }
+
+
+@app.get("/api/plugin/projects/{project_id}/exports")
+def plugin_project_exports(
+    project_id: str,
+    engine: str | None = None,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    exports = [
+        {
+            "id": export["id"],
+            "engine": export["package"]["manifest"]["engine"],
+            "status": export["status"],
+            "name": f"{project['name']} {export['package']['manifest']['engine']}",
+            "manifest_url": f"/api/plugin/exports/{export['id']}/manifest",
+            "download_url": f"/api/plugin/exports/{export['id']}/download",
+        }
+        for export in store["exports"].values()
+        if export["project_id"] == project["id"]
+        and (engine is None or export["package"]["manifest"]["engine"] == engine)
+    ]
+    return {"exports": exports}
 
 
 @app.get("/api/plugin/exports/{export_id}/manifest")
@@ -741,6 +814,10 @@ def build_engine_manifest(
         "assets": [{"path": file_path, "kind": engine_asset_kind(file_path)} for file_path in files],
         "import_plan": import_plan,
     }
+
+
+def supported_plugin_engines() -> list[str]:
+    return ["unity", "cocos3", "cocos2", "godot"]
 
 
 def safe_slug(value: str) -> str:

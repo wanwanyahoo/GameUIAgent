@@ -41,6 +41,13 @@ export type EngineExportTarget = {
   importSteps: string[];
 };
 
+export type PluginConnectionStep = {
+  id: "auth" | "projects" | "exports" | "download";
+  title: string;
+  apiPath: string;
+  detail: string;
+};
+
 export type DemoTask = {
   kind: "text_to_image" | "ui_segmentation" | "unity_export" | "plugin_import";
   status: "ready" | "running" | "succeeded";
@@ -293,6 +300,33 @@ export const engineExportTargets: EngineExportTarget[] = [
     engineVersion: "4.x",
     entry: "Godot TSCN scene",
     importSteps: ["copy_textures", "write_tscn_scene", "refresh_filesystem", "write_import_log"]
+  }
+];
+
+export const pluginConnectionSteps: PluginConnectionStep[] = [
+  {
+    id: "auth",
+    title: "Plugin Auth",
+    apiPath: "/api/plugin/auth",
+    detail: "Exchange a Web-issued plugin token for a short-lived editor access token."
+  },
+  {
+    id: "projects",
+    title: "Project Sync",
+    apiPath: "/api/plugin/projects",
+    detail: "List owned projects with supported engine targets for the active editor."
+  },
+  {
+    id: "exports",
+    title: "Export Query",
+    apiPath: "/api/plugin/projects/{project_id}/exports?engine=unity",
+    detail: "Filter ready export packages by project and engine before import."
+  },
+  {
+    id: "download",
+    title: "Package Download",
+    apiPath: "/api/plugin/exports/{export_id}/download",
+    detail: "Download the package, verify checksum and start the native import plan."
   }
 ];
 

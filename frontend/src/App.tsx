@@ -4,6 +4,7 @@ import {
   engineExportTargets,
   importSources,
   platformCapabilities,
+  pluginConnectionSteps,
   productionWorkflow,
   unityPluginFlow
 } from "./lib/platform";
@@ -188,6 +189,23 @@ export function App() {
                   <b key={step}>{step}</b>
                 ))}
               </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" id="plugin-connection">
+        <div className="section-heading">
+          <p className="eyebrow">Engine plugin connection</p>
+          <h2>Editor plugins authenticate, sync projects, query exports and download packages.</h2>
+        </div>
+        <div className="connection-lane">
+          {pluginConnectionSteps.map((step, index) => (
+            <article className="connection-step" key={step.id}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{step.title}</h3>
+              <code>{step.apiPath}</code>
+              <p>{step.detail}</p>
             </article>
           ))}
         </div>

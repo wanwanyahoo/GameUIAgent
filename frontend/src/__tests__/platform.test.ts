@@ -7,6 +7,7 @@ import {
   engineExportTargets,
   importSources,
   platformCapabilities,
+  pluginConnectionSteps,
   productionWorkflow,
   unityPluginFlow
 } from "../lib/platform";
@@ -99,5 +100,16 @@ describe("platform model", () => {
       "create_prefab",
       "write_import_log"
     ]);
+  });
+
+  it("models engine plugin connection steps", () => {
+    assert.deepEqual(pluginConnectionSteps.map((step) => step.id), [
+      "auth",
+      "projects",
+      "exports",
+      "download"
+    ]);
+    assert.equal(pluginConnectionSteps[0]?.apiPath, "/api/plugin/auth");
+    assert.equal(pluginConnectionSteps[2]?.apiPath, "/api/plugin/projects/{project_id}/exports?engine=unity");
   });
 });
