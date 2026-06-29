@@ -122,6 +122,65 @@ def test_project_ai_segmentation_and_unity_export_flow():
     assert plugin_response.json()["jobs"][0]["id"] == export["id"]
 
 
+def test_studio_state_applies_corrections_and_previews_export_wizard():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Studio Actions UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "actionable studio ui"},
+    ).json()
+    client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": job["result_asset"]["id"]},
+    )
+
+    state_response = client.get(f"/api/projects/{project['id']}/studio", headers=headers)
+    assert state_response.status_code == 200
+    studio = state_response.json()
+    assert [action["id"] for action in studio["action_dock"]] == [
+        "regenerate",
+        "open-slice-editor",
+        "apply-correction",
+        "export-package",
+    ]
+    assert studio["active_selection"]["selected_layer_id"] == "button_primary"
+    assert studio["segmentation_corrections"][0]["status"] == "pending"
+    assert [step["status"] for step in studio["export_wizard"]["steps"]] == [
+        "complete",
+        "active",
+        "pending",
+        "pending",
+    ]
+
+    correction_id = studio["segmentation_corrections"][0]["id"]
+    apply_response = client.post(
+        f"/api/projects/{project['id']}/studio/corrections/{correction_id}/apply",
+        headers=headers,
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["correction"]["status"] == "applied"
+
+    wizard_response = client.post(
+        f"/api/projects/{project['id']}/studio/export-wizard",
+        headers=headers,
+        json={"target_engine": "unity"},
+    )
+    assert wizard_response.status_code == 200
+    preview = wizard_response.json()
+    assert preview["export_preview"]["target_engine"] == "unity"
+    assert preview["export_preview"]["entry"].endswith("StudioActionsUi.prefab")
+
+
 def test_segmentation_rejects_assets_from_other_projects():
     owner_headers = auth_headers()
     owner_project = client.post(

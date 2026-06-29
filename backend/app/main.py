@@ -47,6 +47,10 @@ class ExportRequest(BaseModel):
     target_engine: str
 
 
+class StudioExportWizardRequest(BaseModel):
+    target_engine: str
+
+
 class EngineSnapshotRequest(BaseModel):
     engine: str
     source: str
@@ -129,6 +133,7 @@ store: dict[str, Any] = {
     "billing_accounts": {},
     "usage_events": {},
     "rate_limits": {},
+    "studio_states": {},
 }
 
 
@@ -340,6 +345,62 @@ def create_export(
     export["package"]["manifest"]["download_url"] = f"/api/plugin/exports/{export['id']}/download"
     store["exports"][export["id"]] = export
     return export
+
+
+@app.get("/api/projects/{project_id}/studio")
+def get_studio_state(project_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    return ensure_studio_state(project)
+
+
+@app.post("/api/projects/{project_id}/studio/corrections/{correction_id}/apply")
+def apply_studio_correction(
+    project_id: str,
+    correction_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    studio = ensure_studio_state(project)
+    correction = next(
+        (
+            item
+            for item in studio["segmentation_corrections"]
+            if item["id"] == correction_id
+        ),
+        None,
+    )
+    if not correction:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Correction not found")
+    correction["status"] = "applied"
+    studio["active_selection"]["selected_layer_id"] = correction["target_layer_id"]
+    return {"status": "applied", "correction": correction, "studio": studio}
+
+
+@app.post("/api/projects/{project_id}/studio/export-wizard")
+def preview_studio_export_wizard(
+    project_id: str,
+    payload: StudioExportWizardRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    studio = ensure_studio_state(project)
+    ir = latest_project_ir(project) or build_demo_ir(project)
+    package = build_export_package(project, ir, payload.target_engine)
+    for step in studio["export_wizard"]["steps"]:
+        if step["id"] in {"select-engine", "validate-ir"}:
+            step["status"] = "complete"
+        elif step["id"] == "build-package":
+            step["status"] = "active"
+    return {
+        "project_id": project["id"],
+        "studio": studio,
+        "export_preview": {
+            "target_engine": payload.target_engine,
+            "entry": package["manifest"]["entry"]["path"],
+            "package_kind": package["kind"],
+            "steps": package["manifest"].get("unity_import_plan", package["manifest"].get("import_plan", {})).get("steps", []),
+        },
+    }
 
 
 @app.get("/api/plugin/export-jobs")
@@ -627,6 +688,62 @@ def require_developer_task(task_id: str, user: dict[str, Any]) -> dict[str, Any]
     if not task or task["user_id"] != user["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return task
+
+
+def latest_project_ir(project: dict[str, Any]) -> dict[str, Any] | None:
+    project_irs = [ir for ir in store["irs"].values() if ir["project_id"] == project["id"]]
+    return project_irs[-1] if project_irs else None
+
+
+def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
+    studio = store["studio_states"].get(project["id"])
+    if studio:
+        return studio
+    ir = latest_project_ir(project) or build_demo_ir(project)
+    button_node = next((node for node in ir["nodes"] if node["type"] == "button"), ir["nodes"][0])
+    studio = {
+        "project_id": project["id"],
+        "active_selection": {
+            "selected_layer_id": button_node["id"],
+            "selected_asset_id": "asset_slice",
+            "active_task_id": "timeline_slice",
+        },
+        "action_dock": [
+            {"id": "regenerate", "title": "Regenerate", "shortcut": "R"},
+            {"id": "open-slice-editor", "title": "Open Slice Editor", "shortcut": "S"},
+            {"id": "apply-correction", "title": "Apply Correction", "shortcut": "A"},
+            {"id": "export-package", "title": "Export Package", "shortcut": "E"},
+        ],
+        "segmentation_corrections": [
+            {
+                "id": "correction_button_bounds",
+                "target_layer_id": button_node["id"],
+                "title": f"{button_node['name']} bounds",
+                "change": "Resize hit box to match nine-slice button art.",
+                "confidence": 0.92,
+                "status": "pending",
+            },
+            {
+                "id": "correction_label_binding",
+                "target_layer_id": "title_text",
+                "title": "Text binding",
+                "change": "Attach text node to the selected button hierarchy.",
+                "confidence": 0.87,
+                "status": "pending",
+            },
+        ],
+        "export_wizard": {
+            "target_engine": project["target_engine"],
+            "steps": [
+                {"id": "select-engine", "title": "Select Target Engine", "status": "complete"},
+                {"id": "validate-ir", "title": "Validate Asset IR", "status": "active"},
+                {"id": "build-package", "title": "Build Engine Package", "status": "pending"},
+                {"id": "sync-plugin", "title": "Sync Through Plugin", "status": "pending"},
+            ],
+        },
+    }
+    store["studio_states"][project["id"]] = studio
+    return studio
 
 
 def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
