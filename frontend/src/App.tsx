@@ -1,0 +1,135 @@
+import { createDemoProject, platformCapabilities, productionWorkflow } from "./lib/platform";
+
+const demoProject = createDemoProject("Cyberpunk RPG UI", "unity");
+
+export function App() {
+  return (
+    <main className="app-shell">
+      <header className="nav">
+        <a className="brand" href="#top" aria-label="GameUIAgent home">
+          <span className="brand-mark">G</span>
+          <span>GameUIAgent</span>
+        </a>
+        <nav className="nav-links" aria-label="Primary navigation">
+          <a href="#studio">AI Studio</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#engines">Engines</a>
+          <a href="#pricing">Pricing</a>
+        </nav>
+        <a className="nav-cta" href="#studio">
+          Launch Studio
+        </a>
+      </header>
+
+      <section id="top" className="hero">
+        <div className="hero-copy">
+          <p className="eyebrow">VberAI-inspired production platform</p>
+          <h1>AI Game Asset Production from concept to engine import.</h1>
+          <p className="hero-subtitle">
+            Replicate the official site experience and extend it into a complete AI Studio for
+            game UI generation, slicing, Asset IR, Unity-first export and engine plugin loops.
+          </p>
+          <div className="hero-actions">
+            <a className="button primary" href="#studio">
+              Open AI Studio
+            </a>
+            <a className="button secondary" href="#workflow">
+              View Production Chain
+            </a>
+          </div>
+        </div>
+
+        <aside className="hero-console" aria-label="Production console preview">
+          <div className="console-topline">
+            <span>Unity-first</span>
+            <strong>Pipeline Ready</strong>
+          </div>
+          <div className="canvas-preview">
+            <div className="preview-panel">
+              <span className="preview-chip">PSD / PSB / Figma</span>
+              <span className="preview-title">Cyberpunk RPG UI</span>
+              <span className="preview-button">Generated CTA</span>
+            </div>
+          </div>
+          <div className="task-grid">
+            {demoProject.tasks.map((task) => (
+              <span key={task.kind} className={`task-pill ${task.status}`}>
+                {task.kind.replaceAll("_", " ")}
+              </span>
+            ))}
+          </div>
+        </aside>
+      </section>
+
+      <section className="section" id="studio">
+        <div className="section-heading">
+          <p className="eyebrow">AI Studio</p>
+          <h2>One canvas for generation, import, slicing and export.</h2>
+        </div>
+        <div className="studio-layout">
+          <div className="panel asset-panel">
+            <h3>Assets</h3>
+            <span>generated concept</span>
+            <span>button atlas</span>
+            <span>layout json</span>
+          </div>
+          <div className="panel studio-canvas">
+            <div className="canvas-card">
+              <span>Asset IR</span>
+              <strong>{demoProject.ir.nodes.length} structured nodes</strong>
+            </div>
+          </div>
+          <div className="panel inspector">
+            <h3>Export</h3>
+            <p>Unity Prefab + Scene + Sprite Atlas</p>
+            <p>Cocos and Godot packages share the same IR.</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="section" id="workflow">
+        <div className="section-heading">
+          <p className="eyebrow">End-to-end workflow</p>
+          <h2>From professional design layers to engine-ready packages.</h2>
+        </div>
+        <div className="workflow">
+          {productionWorkflow.map((step, index) => (
+            <article className="workflow-step" key={step.title}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{step.title}</h3>
+              <p>{step.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" id="engines">
+        <div className="section-heading">
+          <p className="eyebrow">Complete capability map</p>
+          <h2>Website, AI tools, engine automation and platform APIs.</h2>
+        </div>
+        <div className="capability-grid">
+          {platformCapabilities.map((capability) => (
+            <article className="capability-card" key={capability.id}>
+              <span>{capability.group}</span>
+              <h3>{capability.title}</h3>
+              <p>{capability.summary}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section pricing" id="pricing">
+        <div>
+          <p className="eyebrow">Credits, API and plugins</p>
+          <h2>Built for demos now, structured for commercial plans later.</h2>
+        </div>
+        <a className="button primary" href="#top">
+          Start Full Replication
+        </a>
+      </section>
+    </main>
+  );
+}
+
+export default App;

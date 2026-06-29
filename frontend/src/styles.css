@@ -1,0 +1,429 @@
+@import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500;700&family=Manrope:wght@500;700;800&display=swap");
+
+:root {
+  color: #e8f7ff;
+  background: #06080d;
+  font-family: "Manrope", "Helvetica Neue", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(19, 109, 255, 0.24), transparent 28rem),
+    radial-gradient(circle at 80% 0%, rgba(0, 255, 190, 0.14), transparent 24rem),
+    linear-gradient(135deg, #05070b 0%, #08101b 45%, #030409 100%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app-shell {
+  position: relative;
+  overflow: hidden;
+}
+
+.app-shell::before {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, black, transparent 76%);
+}
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1.1rem clamp(1rem, 4vw, 4rem);
+  border-bottom: 1px solid rgba(124, 232, 255, 0.16);
+  background: rgba(4, 8, 14, 0.72);
+  backdrop-filter: blur(24px);
+}
+
+.brand,
+.nav-links,
+.hero-actions,
+.task-grid {
+  display: flex;
+  align-items: center;
+}
+
+.brand {
+  gap: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.brand-mark {
+  display: grid;
+  width: 2.1rem;
+  height: 2.1rem;
+  place-items: center;
+  color: #001017;
+  background: #7cf8ff;
+  border-radius: 0.65rem;
+  box-shadow: 0 0 28px rgba(124, 248, 255, 0.62);
+}
+
+.nav-links {
+  gap: 1.4rem;
+  color: rgba(232, 247, 255, 0.72);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82rem;
+}
+
+.nav-cta,
+.button {
+  border: 1px solid rgba(124, 248, 255, 0.35);
+  border-radius: 999px;
+  font-weight: 800;
+}
+
+.nav-cta {
+  padding: 0.72rem 1rem;
+  background: rgba(124, 248, 255, 0.1);
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  gap: clamp(2rem, 5vw, 5rem);
+  align-items: center;
+  min-height: 86vh;
+  padding: clamp(4rem, 8vw, 8rem) clamp(1rem, 4vw, 4rem);
+}
+
+.hero h1,
+.section-heading h2,
+.pricing h2 {
+  margin: 0;
+  font-family: "Archivo Black", Impact, sans-serif;
+  line-height: 0.95;
+  letter-spacing: -0.06em;
+}
+
+.hero h1 {
+  max-width: 880px;
+  font-size: clamp(3.2rem, 8.2vw, 8.4rem);
+}
+
+.eyebrow {
+  margin: 0 0 1rem;
+  color: #7cf8ff;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.hero-subtitle {
+  max-width: 720px;
+  margin: 1.6rem 0 0;
+  color: rgba(232, 247, 255, 0.72);
+  font-size: clamp(1rem, 2vw, 1.3rem);
+  line-height: 1.75;
+}
+
+.hero-actions {
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 2rem;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3rem;
+  padding: 0.82rem 1.2rem;
+}
+
+.primary {
+  color: #021018;
+  background: linear-gradient(135deg, #7cf8ff, #d7ff66);
+  box-shadow: 0 18px 70px rgba(124, 248, 255, 0.28);
+}
+
+.secondary {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.hero-console,
+.panel,
+.workflow-step,
+.capability-card,
+.pricing {
+  border: 1px solid rgba(124, 232, 255, 0.16);
+  background: linear-gradient(145deg, rgba(12, 23, 38, 0.9), rgba(5, 8, 14, 0.78));
+  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.42);
+}
+
+.hero-console {
+  position: relative;
+  padding: 1.1rem;
+  border-radius: 2rem;
+  transform: rotate(-1.2deg);
+}
+
+.console-topline {
+  display: flex;
+  justify-content: space-between;
+  color: rgba(232, 247, 255, 0.64);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+}
+
+.console-topline strong {
+  color: #d7ff66;
+}
+
+.canvas-preview {
+  min-height: 380px;
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: 1.5rem;
+  background:
+    linear-gradient(135deg, rgba(124, 248, 255, 0.16), rgba(215, 255, 102, 0.08)),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 24px);
+}
+
+.preview-panel {
+  display: grid;
+  gap: 1rem;
+  align-content: center;
+  min-height: 340px;
+  padding: 2rem;
+  border: 1px solid rgba(124, 248, 255, 0.28);
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(circle at 85% 20%, rgba(215, 255, 102, 0.22), transparent 11rem),
+    linear-gradient(135deg, #0d1a2d, #15103a 54%, #06121d);
+}
+
+.preview-chip,
+.preview-button,
+.task-pill {
+  width: fit-content;
+  font-family: "IBM Plex Mono", monospace;
+  text-transform: uppercase;
+}
+
+.preview-chip {
+  padding: 0.4rem 0.7rem;
+  color: #d7ff66;
+  border: 1px solid rgba(215, 255, 102, 0.38);
+  border-radius: 999px;
+}
+
+.preview-title {
+  max-width: 360px;
+  font-family: "Archivo Black", Impact, sans-serif;
+  font-size: clamp(2.3rem, 5vw, 4.6rem);
+  line-height: 0.9;
+  letter-spacing: -0.06em;
+}
+
+.preview-button {
+  padding: 0.8rem 1rem;
+  color: #001017;
+  background: #7cf8ff;
+  border-radius: 0.8rem;
+}
+
+.task-grid {
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.task-pill {
+  padding: 0.45rem 0.65rem;
+  color: rgba(232, 247, 255, 0.7);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  font-size: 0.68rem;
+}
+
+.task-pill.succeeded {
+  color: #d7ff66;
+}
+
+.section {
+  padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 4vw, 4rem);
+}
+
+.section-heading {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 900px;
+  margin-bottom: 2rem;
+}
+
+.section-heading h2,
+.pricing h2 {
+  font-size: clamp(2.4rem, 5vw, 5rem);
+}
+
+.studio-layout {
+  display: grid;
+  grid-template-columns: 0.8fr 1.4fr 0.9fr;
+  gap: 1rem;
+}
+
+.panel {
+  min-height: 280px;
+  padding: 1.2rem;
+  border-radius: 1.4rem;
+}
+
+.asset-panel,
+.inspector {
+  display: grid;
+  align-content: start;
+  gap: 0.9rem;
+}
+
+.asset-panel span,
+.inspector p {
+  margin: 0;
+  padding: 0.8rem;
+  color: rgba(232, 247, 255, 0.72);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 0.8rem;
+}
+
+.studio-canvas {
+  display: grid;
+  min-height: 420px;
+  place-items: center;
+  background:
+    radial-gradient(circle, rgba(124, 248, 255, 0.14), transparent 18rem),
+    linear-gradient(145deg, rgba(8, 18, 30, 0.94), rgba(5, 8, 14, 0.88));
+}
+
+.canvas-card {
+  display: grid;
+  gap: 0.6rem;
+  width: min(380px, 100%);
+  padding: 1.4rem;
+  border: 1px solid rgba(215, 255, 102, 0.28);
+  border-radius: 1.2rem;
+  background: rgba(215, 255, 102, 0.08);
+}
+
+.canvas-card strong {
+  font-size: 1.6rem;
+}
+
+.workflow,
+.capability-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.workflow {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.workflow-step,
+.capability-card {
+  min-height: 220px;
+  padding: 1rem;
+  border-radius: 1.2rem;
+}
+
+.workflow-step span,
+.capability-card span {
+  color: #7cf8ff;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+
+.workflow-step h3,
+.capability-card h3 {
+  margin: 1rem 0 0.7rem;
+}
+
+.workflow-step p,
+.capability-card p {
+  color: rgba(232, 247, 255, 0.68);
+  line-height: 1.6;
+}
+
+.capability-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.pricing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  margin: clamp(1rem, 4vw, 4rem);
+  border-radius: 2rem;
+}
+
+@media (max-width: 1040px) {
+  .hero,
+  .studio-layout,
+  .workflow,
+  .capability-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .studio-canvas {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .nav {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .nav-links {
+    flex-wrap: wrap;
+  }
+
+  .hero,
+  .studio-layout,
+  .workflow,
+  .capability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-console {
+    transform: none;
+  }
+
+  .pricing {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+

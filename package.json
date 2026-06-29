@@ -1,0 +1,25 @@
+{
+  "name": "game-ui-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build && python3 -m http.server 5173 -d dist/frontend",
+    "build": "tsc --noEmit && node scripts/build-frontend.mjs",
+    "test": "tsx --test frontend/src/__tests__/*.test.ts frontend/src/__tests__/*.test.tsx",
+    "test:backend": "python3 -m pytest backend/tests -q",
+    "test:all": "npm run test && npm run test:backend"
+  },
+  "dependencies": {
+    "esbuild": "0.25.12",
+    "typescript": "5.7.2",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "tsx": "4.20.6",
+    "@types/node": "22.10.2",
+    "@types/react": "19.0.1",
+    "@types/react-dom": "19.0.2"
+  }
+}

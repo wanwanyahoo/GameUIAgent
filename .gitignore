@@ -1,2 +1,10 @@
 .superpowers/
 .DS_Store
+node_modules/
+dist/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
