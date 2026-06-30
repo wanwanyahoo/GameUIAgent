@@ -246,7 +246,7 @@ export function App() {
       <section className="section" id="engine-matrix">
         <div className="section-heading">
           <p className="eyebrow">Multi-engine export matrix</p>
-          <h2>One Asset IR now emits native import plans for Unity, Cocos and Godot.</h2>
+          <h2>One Asset IR now emits native import plans for Unity, Cocos, Godot and Unreal.</h2>
         </div>
         <div className="engine-matrix">
           {engineExportTargets.map((target) => (

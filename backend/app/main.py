@@ -833,7 +833,7 @@ def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
         "id": make_id("ir"),
         "project_id": project["id"],
         "version": "0.1.0",
-        "engine_targets": ["unity", "cocos", "godot"],
+        "engine_targets": ["unity", "cocos", "godot", "unreal"],
         "canvas": {"width": width, "height": height},
         "nodes": [
             {"id": "root", "type": "canvas", "name": project["name"], "rect": {"x": 0, "y": 0, "width": width, "height": height}},
@@ -889,7 +889,7 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
         "id": make_id("ir"),
         "project_id": project["id"],
         "version": "0.1.0",
-        "engine_targets": ["unity", "cocos", "godot"],
+        "engine_targets": ["unity", "cocos", "godot", "unreal"],
         "canvas": project["canvas"],
         "professional_source": {
             "source_type": document["source_type"],
@@ -1014,6 +1014,32 @@ def build_export_package(project: dict[str, Any], ir: dict[str, Any], target_eng
             },
         )
         return {"kind": "godot_package", "files": files, "manifest": manifest}
+    if target_engine == "unreal":
+        files = [
+            f"Unreal/Content/GameUIAgent/Textures/T_{slug}_Atlas.uasset",
+            f"Unreal/Content/GameUIAgent/Widgets/WBP_{slug}.uasset",
+            f"Unreal/Content/GameUIAgent/Metadata/{slug}.json",
+        ]
+        manifest = build_engine_manifest(
+            project=project,
+            ir=ir,
+            engine="unreal",
+            engine_version="5.3+",
+            entry_type="umg_widget_blueprint",
+            entry_path=files[1],
+            files=files,
+            import_plan={
+                "root": "Unreal/Content/GameUIAgent",
+                "steps": [
+                    "copy_textures",
+                    "create_texture_assets",
+                    "create_umg_widget_blueprint",
+                    "bind_slate_slots",
+                    "write_import_log",
+                ],
+            },
+        )
+        return {"kind": "unreal_package", "files": files, "manifest": manifest}
     return {
         "kind": f"{target_engine}_package",
         "files": [f"exports/{target_engine}/{slug}/manifest.json"],
@@ -1054,7 +1080,7 @@ def build_engine_manifest(
 
 
 def supported_plugin_engines() -> list[str]:
-    return ["unity", "cocos3", "cocos2", "godot"]
+    return ["unity", "cocos3", "cocos2", "godot", "unreal"]
 
 
 def create_billing_account(user: dict[str, Any]) -> dict[str, Any]:

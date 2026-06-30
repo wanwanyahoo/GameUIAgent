@@ -34,7 +34,7 @@ export type UnityPluginStep = {
 };
 
 export type EngineExportTarget = {
-  id: "unity" | "cocos3" | "cocos2" | "godot";
+  id: "unity" | "cocos3" | "cocos2" | "godot" | "unreal";
   title: string;
   engineVersion: string;
   entry: string;
@@ -207,9 +207,9 @@ export const platformCapabilities: Capability[] = [
     group: "engine"
   },
   {
-    id: "unreal-roadmap",
-    title: "Unreal UMG Roadmap",
-    summary: "Extend the asset pipeline to UMG, Widget Blueprint, Slate and asset imports.",
+    id: "unreal-export",
+    title: "Unreal UMG Export",
+    summary: "Generate Unreal 5 UMG Widget Blueprints, texture assets and Slate slot bindings.",
     group: "engine"
   },
   {
@@ -247,7 +247,7 @@ export const productionWorkflow: WorkflowStep[] = [
   },
   {
     title: "Export Engine Package",
-    detail: "Produce Unity-first packages while keeping Cocos and Godot targets available."
+    detail: "Produce Unity-first packages while keeping Cocos, Godot and Unreal targets available."
   },
   {
     title: "Import Through Plugin",
@@ -370,6 +370,19 @@ export const engineExportTargets: EngineExportTarget[] = [
     engineVersion: "4.x",
     entry: "Godot TSCN scene",
     importSteps: ["copy_textures", "write_tscn_scene", "refresh_filesystem", "write_import_log"]
+  },
+  {
+    id: "unreal",
+    title: "Unreal Engine 5.3+",
+    engineVersion: "5.3+",
+    entry: "Unreal UMG Widget Blueprint",
+    importSteps: [
+      "copy_textures",
+      "create_texture_assets",
+      "create_umg_widget_blueprint",
+      "bind_slate_slots",
+      "write_import_log"
+    ]
   }
 ];
 

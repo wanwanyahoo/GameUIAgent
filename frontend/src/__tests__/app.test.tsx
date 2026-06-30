@@ -48,11 +48,14 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     assert.match(html, /Multi-engine export matrix/);
+    assert.match(html, /Unity, Cocos, Godot and Unreal/);
     assert.match(html, /Unity 2022.3\+/);
     assert.match(html, /Cocos Creator 3.8.6\+/);
     assert.match(html, /Cocos Creator 2.4.x\+/);
     assert.match(html, /Godot 4.x/);
+    assert.match(html, /Unreal Engine 5.3\+/);
     assert.match(html, /write_tscn_scene/);
+    assert.match(html, /create_umg_widget_blueprint/);
   });
 
   it("renders the engine plugin connection sequence", () => {

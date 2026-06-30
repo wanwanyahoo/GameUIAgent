@@ -97,7 +97,7 @@ def test_project_ai_segmentation_and_unity_export_flow():
     )
     assert segmentation_response.status_code == 201
     segmentation = segmentation_response.json()
-    assert segmentation["ir"]["engine_targets"] == ["unity", "cocos", "godot"]
+    assert segmentation["ir"]["engine_targets"] == ["unity", "cocos", "godot", "unreal"]
     assert [node["type"] for node in segmentation["ir"]["nodes"]] == [
         "canvas",
         "panel",
@@ -592,6 +592,12 @@ def test_multi_engine_exports_have_native_manifest_import_plans():
             "4.x",
             ["copy_textures", "write_tscn_scene", "refresh_filesystem", "write_import_log"],
         ),
+        (
+            "unreal",
+            "Unreal/Content/GameUIAgent/Widgets/WBP_PluginHud.uasset",
+            "5.3+",
+            ["copy_textures", "create_texture_assets", "create_umg_widget_blueprint", "bind_slate_slots", "write_import_log"],
+        ),
     ]
 
     for engine, entry_path, engine_version, steps in cases:
@@ -644,7 +650,7 @@ def test_plugin_auth_lists_projects_and_project_exports():
         unity_created["project"]["id"],
         godot_created["project"]["id"],
     }
-    assert projects[0]["target_engines"] == ["unity", "cocos3", "cocos2", "godot"]
+    assert projects[0]["target_engines"] == ["unity", "cocos3", "cocos2", "godot", "unreal"]
 
     exports_response = client.get(
         f"/api/plugin/projects/{unity_created['project']['id']}/exports?engine=unity",

@@ -40,7 +40,7 @@ describe("platform model", () => {
         "unity-export",
         "cocos-export",
         "godot-export",
-        "unreal-roadmap",
+        "unreal-export",
         "engine-mcp",
         "developer-api",
         "billing"
@@ -100,10 +100,11 @@ describe("platform model", () => {
     ]);
   });
 
-  it("models native export plans for Unity, Cocos and Godot", () => {
-    assert.deepEqual(engineExportTargets.map((target) => target.id), ["unity", "cocos3", "cocos2", "godot"]);
+  it("models native export plans for Unity, Cocos, Godot and Unreal", () => {
+    assert.deepEqual(engineExportTargets.map((target) => target.id), ["unity", "cocos3", "cocos2", "godot", "unreal"]);
     assert.equal(engineExportTargets.find((target) => target.id === "cocos3")?.entry, "Cocos3 prefab");
     assert.equal(engineExportTargets.find((target) => target.id === "godot")?.engineVersion, "4.x");
+    assert.equal(engineExportTargets.find((target) => target.id === "unreal")?.entry, "Unreal UMG Widget Blueprint");
     assert.deepEqual(engineExportTargets.find((target) => target.id === "cocos2")?.importSteps, [
       "copy_textures",
       "create_sprite_frames",
