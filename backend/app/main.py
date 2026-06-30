@@ -124,6 +124,7 @@ class ProfessionalLayer(BaseModel):
     parent_id: str | None = None
     group_path: list[str] | None = None
     text: str | None = None
+    text_style: dict[str, Any] | None = None
     component_key: str | None = None
     auto_layout: dict[str, Any] | None = None
     opacity: float | None = None
@@ -1972,6 +1973,7 @@ def parse_psd_layer_records(source_asset: dict[str, Any], source_type: str) -> l
         is_group = section_divider_type in {1, 2}
         smart_object = metadata.get("smart_object") is True
         text_content = metadata.get("text")
+        text_style = metadata.get("text_style")
         kind = "group" if is_group else "text" if text_content else "component" if smart_object else "image"
         layer = ProfessionalLayer(
             id=f"psd_layer_{index + 1}_{sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower() or 'layer'}",
@@ -1979,6 +1981,7 @@ def parse_psd_layer_records(source_asset: dict[str, Any], source_type: str) -> l
             kind=kind,
             rect={"x": left, "y": top, "width": max(right - left, 0), "height": max(bottom - top, 0)},
             text=text_content,
+            text_style=text_style,
             opacity=round(opacity_byte / 255, 3),
             visible=(flags & 2) == 0,
             is_group=is_group,
@@ -2031,19 +2034,24 @@ def parse_psd_layer_metadata(extra_data: bytes) -> dict[str, Any]:
         elif key in {b"SoLd", b"SoLE", b"SoCo"}:
             metadata["smart_object"] = True
         elif key in {b"TySh", b"tySh"}:
-            text = parse_psd_type_tool_text(payload)
-            if text:
-                metadata["text"] = text
+            type_tool = parse_psd_type_tool(payload)
+            if type_tool.get("text"):
+                metadata["text"] = type_tool["text"]
+            if type_tool.get("style"):
+                metadata["text_style"] = type_tool["style"]
     return metadata
 
 
-def parse_psd_type_tool_text(payload: bytes) -> str | None:
+def parse_psd_type_tool(payload: bytes) -> dict[str, Any]:
     for encoding in ("utf-8", "utf-16-be"):
         decoded = payload.decode(encoding, errors="ignore")
-        text = extract_engine_data_text(decoded)
-        if text:
-            return text
-    return None
+        parsed = {
+            "text": extract_engine_data_text(decoded),
+            "style": extract_engine_data_text_style(decoded),
+        }
+        if parsed["text"] or parsed["style"]:
+            return parsed
+    return {}
 
 
 def extract_engine_data_text(engine_data: str) -> str | None:
@@ -2058,6 +2066,57 @@ def extract_engine_data_text(engine_data: str) -> str | None:
                 return text
             marker_index = engine_data.find(marker, max(close_index, open_index + 1))
     return None
+
+
+def extract_engine_data_text_style(engine_data: str) -> dict[str, Any] | None:
+    style: dict[str, Any] = {}
+    font = extract_engine_data_parenthesized_value(engine_data, "/Font")
+    color = extract_engine_data_parenthesized_value(engine_data, "/FillColor")
+    font_size = extract_engine_data_numeric_value(engine_data, "/FontSize")
+    if font:
+        style["font"] = font
+    if font_size is not None:
+        style["font_size"] = int(font_size) if font_size.is_integer() else font_size
+    if color:
+        style["fill_color"] = color
+    return style or None
+
+
+def extract_engine_data_parenthesized_value(engine_data: str, marker: str) -> str | None:
+    for marker_index in find_engine_data_marker_positions(engine_data, marker):
+        open_index = engine_data.find("(", marker_index + len(marker))
+        if open_index != -1:
+            text, _ = read_parenthesized_text(engine_data, open_index)
+            return text
+    return None
+
+
+def extract_engine_data_numeric_value(engine_data: str, marker: str) -> float | None:
+    marker_positions = find_engine_data_marker_positions(engine_data, marker)
+    if not marker_positions:
+        return None
+    marker_index = marker_positions[0]
+    cursor = marker_index + len(marker)
+    while cursor < len(engine_data) and engine_data[cursor].isspace():
+        cursor += 1
+    end = cursor
+    while end < len(engine_data) and (engine_data[end].isdigit() or engine_data[end] in ".-"):
+        end += 1
+    try:
+        return float(engine_data[cursor:end])
+    except ValueError:
+        return None
+
+
+def find_engine_data_marker_positions(engine_data: str, marker: str) -> list[int]:
+    positions: list[int] = []
+    marker_index = engine_data.find(marker)
+    while marker_index != -1:
+        next_index = marker_index + len(marker)
+        if next_index >= len(engine_data) or not (engine_data[next_index].isalnum() or engine_data[next_index] == "_"):
+            positions.append(marker_index)
+        marker_index = engine_data.find(marker, marker_index + 1)
+    return positions
 
 
 def read_parenthesized_text(value: str, open_index: int) -> tuple[str | None, int]:
@@ -2133,7 +2192,10 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             },
         }
         if layer.get("text"):
-            node["text"] = {"content": layer["text"]}
+            node["text"] = {
+                "content": layer["text"],
+                **({"style": layer["text_style"]} if layer.get("text_style") else {}),
+            }
         if layer.get("component_key"):
             node["component"] = {"key": layer["component_key"]}
         if layer.get("auto_layout"):

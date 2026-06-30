@@ -41,8 +41,13 @@ def psd_unicode_layer_name(name: str) -> bytes:
     return psd_additional_layer_info(b"luni", len(name).to_bytes(4, "big") + encoded)
 
 
-def psd_type_tool_text(text: str) -> bytes:
-    engine_data = f"/EngineDict << /Editor << /Text ({text}) >> >>".encode("utf-8")
+def psd_type_tool_text(text: str, *, font: str = "Game UI Sans", size: int = 32, color: str = "#ffcc33") -> bytes:
+    font_entry = f"/Font ({font}) " if font else ""
+    engine_data = (
+        f"/EngineDict << /Editor << /Text ({text}) >> "
+        f"/StyleRun << /RunArray [ << /StyleSheet << /StyleSheetData "
+        f"<< {font_entry}/FontSize {size} /FillColor ({color}) >> >> >> ] >> >>"
+    ).encode("utf-8")
     return psd_additional_layer_info(b"TySh", engine_data)
 
 
@@ -178,6 +183,27 @@ def minimal_psd_with_text_layer(width: int, height: int) -> bytes:
             unicode_name="主标题文本",
             type_tool_text="START",
         ),
+    ]
+    channel_pixels = b"\x00\x00" * len(layer_records)
+    layer_info = len(layer_records).to_bytes(2, "big") + b"".join(layer_records) + channel_pixels
+    layer_mask_section = len(layer_info).to_bytes(4, "big") + layer_info
+    return (
+        minimal_psd_header(width, height)
+        + (0).to_bytes(4, "big")
+        + (0).to_bytes(4, "big")
+        + len(layer_mask_section).to_bytes(4, "big")
+        + layer_mask_section
+    )
+
+
+def minimal_psd_with_text_style_without_font(width: int, height: int) -> bytes:
+    layer_records = [
+        psd_layer_record(
+            "Title",
+            {"x": 80, "y": 42, "width": 220, "height": 64},
+            unicode_name="主标题文本",
+            type_tool_text="START",
+        ).replace(b"/Font (Game UI Sans) ", b""),
     ]
     channel_pixels = b"\x00\x00" * len(layer_records)
     layer_info = len(layer_records).to_bytes(2, "big") + b"".join(layer_records) + channel_pixels
@@ -1136,8 +1162,62 @@ def test_professional_import_source_preserves_psd_text_layer_content(tmp_path):
     assert layer["name"] == "主标题文本"
     assert layer["kind"] == "text"
     assert layer["text"] == "START"
+    assert layer["text_style"] == {"font": "Game UI Sans", "font_size": 32, "fill_color": "#ffcc33"}
     assert imported["ir"]["nodes"][1]["type"] == "text"
     assert imported["ir"]["nodes"][1]["text"]["content"] == "START"
+    assert imported["ir"]["nodes"][1]["text"]["style"] == {
+        "font": "Game UI Sans",
+        "font_size": 32,
+        "fill_color": "#ffcc33",
+    }
+
+
+def test_professional_import_source_does_not_confuse_psd_font_size_with_font(tmp_path):
+    configure_persistent_store(str(tmp_path / "psd-text-no-font.sqlite3"))
+    configure_object_storage(str(tmp_path / "psd-text-no-font-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Text PSD Style UI",
+            "target_engine": "unity",
+            "canvas": {"width": 512, "height": 256},
+        },
+    ).json()
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "text-layer-style-hud.psd",
+            "type": "psd",
+            "width": "512",
+            "height": "256",
+            "usage": "professional_import",
+        },
+        files={
+            "file": (
+                "text-layer-style-hud.psd",
+                minimal_psd_with_text_style_without_font(512, 256),
+                "image/vnd.adobe.photoshop",
+            )
+        },
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": uploaded["id"],
+            "parser": "psd-binary-header",
+        },
+    )
+
+    assert source_response.status_code == 201
+    style = source_response.json()["design_document"]["layers"][0]["text_style"]
+    assert style == {"font_size": 32, "fill_color": "#ffcc33"}
+    assert "font" not in style
 
 
 def test_uploaded_png_segmentation_uses_detected_binary_dimensions(tmp_path):
