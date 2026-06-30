@@ -16,6 +16,31 @@ from app.persistence import create_production_store
 client = TestClient(app)
 
 
+def minimal_psd_header(width: int, height: int, *, version: int = 1) -> bytes:
+    return (
+        b"8BPS"
+        + version.to_bytes(2, "big")
+        + b"\x00" * 6
+        + (4).to_bytes(2, "big")
+        + height.to_bytes(4, "big")
+        + width.to_bytes(4, "big")
+        + (8).to_bytes(2, "big")
+        + (3).to_bytes(2, "big")
+    )
+
+
+def minimal_png_header(width: int, height: int) -> bytes:
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x06\x00\x00\x00"
+        + b"\x00\x00\x00\x00"
+    )
+
+
 def auth_headers() -> dict[str, str]:
     payload = {
         "email": f"designer-{uuid4().hex}@gameuiagent.dev",
@@ -659,6 +684,101 @@ def test_professional_import_source_submission_creates_parser_job():
     assert figma_response.status_code == 201
     assert figma_response.json()["source"]["figma_url"].endswith("gameuiagent-shop")
     assert figma_response.json()["ir"]["professional_source"]["frame_id"] == "12:34"
+
+
+def test_professional_import_source_parses_uploaded_psd_binary_header(tmp_path):
+    configure_persistent_store(str(tmp_path / "psd-parser.sqlite3"))
+    configure_object_storage(str(tmp_path / "psd-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Real PSD Parser UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    psd_bytes = minimal_psd_header(2048, 1024)
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "real-hud.psd",
+            "type": "psd",
+            "width": "2048",
+            "height": "1024",
+            "usage": "professional_import",
+            "tags": "psd,production",
+        },
+        files={"file": ("real-hud.psd", psd_bytes, "image/vnd.adobe.photoshop")},
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": uploaded["id"],
+            "parser": "psd-binary-header",
+        },
+    )
+
+    assert source_response.status_code == 201
+    imported = source_response.json()
+    assert imported["source"]["parser"] == "psd-binary-header"
+    assert imported["parse_summary"]["parser"] == "psd-binary-header"
+    assert imported["parse_summary"]["binary_header"] == {
+        "signature": "8BPS",
+        "version": 1,
+        "width": 2048,
+        "height": 1024,
+        "channels": 4,
+        "depth": 8,
+        "color_mode": "rgb",
+    }
+    assert imported["design_document"]["layers"][0]["name"] == "PSD Composite Canvas"
+    assert imported["design_document"]["layers"][0]["rect"] == {"x": 0, "y": 0, "width": 2048, "height": 1024}
+    assert imported["ir"]["nodes"][1]["professional_source"]["parser"] == "psd-binary-header"
+
+
+def test_uploaded_png_segmentation_uses_detected_binary_dimensions(tmp_path):
+    configure_persistent_store(str(tmp_path / "png-dimensions.sqlite3"))
+    configure_object_storage(str(tmp_path / "png-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Detected Slice UI",
+            "target_engine": "unity",
+            "canvas": {"width": 999, "height": 999},
+        },
+    ).json()
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "detected-hud.png",
+            "type": "reference_image",
+            "width": "999",
+            "height": "999",
+            "usage": "source_ui",
+        },
+        files={"file": ("detected-hud.png", minimal_png_header(320, 180), "image/png")},
+    ).json()
+
+    segmentation = client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": uploaded["id"]},
+    ).json()
+
+    assert uploaded["metadata"]["width"] == 320
+    assert uploaded["metadata"]["height"] == 180
+    assert uploaded["metadata"]["detected_dimensions"] == {"width": 320, "height": 180, "format": "png"}
+    assert segmentation["slices"][0]["rect"] == {"x": 38, "y": 21, "width": 243, "height": 125}
+    assert segmentation["ir"]["source_asset"]["detected_dimensions"]["format"] == "png"
 
 
 def test_uploaded_asset_and_ai_job_reject_invalid_production_bounds():

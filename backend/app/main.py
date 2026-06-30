@@ -131,6 +131,8 @@ class ProfessionalImportRequest(BaseModel):
     file_name: str
     layers: list[ProfessionalLayer]
     frame_id: str | None = None
+    parser: str | None = None
+    binary_header: dict[str, Any] | None = None
 
 
 class ProfessionalImportSourceRequest(BaseModel):
@@ -499,6 +501,9 @@ async def upload_project_asset(
     content = await file.read()
     if not content:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty upload file")
+    detected_dimensions = detect_uploaded_image_dimensions(content, file.content_type or "", file.filename or name)
+    asset_width = detected_dimensions["width"] if detected_dimensions else width
+    asset_height = detected_dimensions["height"] if detected_dimensions else height
     try:
         stored = object_storage.put(
             project["id"],
@@ -516,14 +521,15 @@ async def upload_project_asset(
         "url": f"/api/projects/{project['id']}/assets/{{asset_id}}/download",
         "source": "object_storage",
         "metadata": {
-            "width": width,
-            "height": height,
+            "width": asset_width,
+            "height": asset_height,
             "usage": usage,
             "tags": parse_asset_tags(tags),
             "storage_key": stored.key,
             "size_bytes": stored.size_bytes,
             "sha256": stored.sha256,
             "content_type": stored.content_type,
+            **({"detected_dimensions": detected_dimensions} if detected_dimensions else {}),
         },
     }
     asset["url"] = f"/api/projects/{project['id']}/assets/{asset['id']}/download"
@@ -791,13 +797,16 @@ def create_professional_import_source(
         "parser": payload.parser,
     }
     file_name = source_asset["name"] if source_asset else str(payload.figma_url)
+    parsed_source = parse_professional_import_source(project, payload, source_asset)
     document = build_design_document(
         project,
         ProfessionalImportRequest(
             source_type=payload.source_type,
             file_name=file_name,
             frame_id=payload.frame_id,
-            layers=mock_layers_for_import_source(project, payload.source_type),
+            parser=parsed_source["parser"],
+            binary_header=parsed_source.get("binary_header"),
+            layers=parsed_source["layers"],
         ),
     )
     ir = build_ir_from_design_document(project, document)
@@ -809,8 +818,10 @@ def create_professional_import_source(
         "source": source,
         "design_document": document,
         "parse_summary": {
-            "parser": payload.parser,
+            "parser": parsed_source["parser"],
             "preserved_layers": document["preserved_layers"],
+            **({"binary_header": parsed_source["binary_header"]} if parsed_source.get("binary_header") else {}),
+            **({"warnings": parsed_source["warnings"]} if parsed_source.get("warnings") else {}),
         },
         "ir": ir,
     }
@@ -1492,6 +1503,17 @@ def parse_asset_tags(tags: str) -> list[str]:
     return [tag.strip() for tag in tags.split(",") if tag.strip()]
 
 
+def detect_uploaded_image_dimensions(content: bytes, content_type: str, filename: str) -> dict[str, Any] | None:
+    if (content_type == "image/png" or filename.lower().endswith(".png")) and content.startswith(b"\x89PNG\r\n\x1a\n"):
+        if len(content) < 24 or content[12:16] != b"IHDR":
+            return None
+        width = int.from_bytes(content[16:20], "big")
+        height = int.from_bytes(content[20:24], "big")
+        if width > 0 and height > 0:
+            return {"width": width, "height": height, "format": "png"}
+    return None
+
+
 def require_optional_project_asset(project: dict[str, Any], asset_id: str | None) -> dict[str, Any] | None:
     if asset_id is None:
         return None
@@ -1760,6 +1782,11 @@ def build_ir_from_asset_segmentation(project: dict[str, Any], asset: dict[str, A
             "id": asset["id"],
             "type": asset["type"],
             "name": asset["name"],
+            **(
+                {"detected_dimensions": asset["metadata"]["detected_dimensions"]}
+                if asset.get("metadata", {}).get("detected_dimensions")
+                else {}
+            ),
         },
         "nodes": nodes,
     }
@@ -1791,6 +1818,93 @@ def mock_layers_for_import_source(project: dict[str, Any], source_type: str) -> 
     ]
 
 
+def parse_professional_import_source(
+    project: dict[str, Any],
+    payload: ProfessionalImportSourceRequest,
+    source_asset: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if payload.source_type == "figma":
+        return {
+            "parser": payload.parser,
+            "layers": mock_layers_for_import_source(project, payload.source_type),
+            "warnings": ["Figma API parser adapter is not configured; using contract-preserving fallback layers."],
+        }
+    if payload.parser == "mock-layer-parser":
+        return {
+            "parser": payload.parser,
+            "layers": mock_layers_for_import_source(project, payload.source_type),
+            "warnings": ["Mock parser requested explicitly; no binary PSD data was decoded."],
+        }
+    if payload.source_type in {"psd", "psb"}:
+        if not source_asset:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Asset source required")
+        header = parse_psd_binary_header(source_asset, payload.source_type)
+        return {
+            "parser": payload.parser,
+            "binary_header": header,
+            "layers": [
+                ProfessionalLayer(
+                    id=f"{payload.source_type}_composite_canvas",
+                    name=f"{payload.source_type.upper()} Composite Canvas",
+                    kind="image",
+                    rect={"x": 0, "y": 0, "width": header["width"], "height": header["height"]},
+                )
+            ],
+            "warnings": ["Layer records are not present in the minimal header parse; composite canvas fallback created."],
+        }
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported source type")
+
+
+def parse_psd_binary_header(source_asset: dict[str, Any], source_type: str) -> dict[str, Any]:
+    storage_key = source_asset.get("metadata", {}).get("storage_key")
+    if not storage_key:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stored PSD/PSB binary asset required")
+    try:
+        path = object_storage.path_for(storage_key)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stored PSD/PSB binary asset missing")
+    with path.open("rb") as source_file:
+        header = source_file.read(26)
+    if len(header) < 26:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid PSD/PSB header")
+    signature = header[0:4].decode("ascii", errors="ignore")
+    version = int.from_bytes(header[4:6], "big")
+    expected_version = 2 if source_type == "psb" else 1
+    if signature != "8BPS" or version != expected_version:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid PSD/PSB signature or version")
+    channels = int.from_bytes(header[12:14], "big")
+    height = int.from_bytes(header[14:18], "big")
+    width = int.from_bytes(header[18:22], "big")
+    depth = int.from_bytes(header[22:24], "big")
+    color_mode_id = int.from_bytes(header[24:26], "big")
+    if width <= 0 or height <= 0 or channels <= 0 or depth <= 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid PSD/PSB dimensions")
+    return {
+        "signature": signature,
+        "version": version,
+        "width": width,
+        "height": height,
+        "channels": channels,
+        "depth": depth,
+        "color_mode": psd_color_mode_name(color_mode_id),
+    }
+
+
+def psd_color_mode_name(color_mode_id: int) -> str:
+    return {
+        0: "bitmap",
+        1: "grayscale",
+        2: "indexed",
+        3: "rgb",
+        4: "cmyk",
+        7: "multichannel",
+        8: "duotone",
+        9: "lab",
+    }.get(color_mode_id, "unknown")
+
+
 def build_design_document(project: dict[str, Any], payload: ProfessionalImportRequest) -> dict[str, Any]:
     return {
         "id": make_id("dld"),
@@ -1798,6 +1912,8 @@ def build_design_document(project: dict[str, Any], payload: ProfessionalImportRe
         "source_type": payload.source_type,
         "file_name": payload.file_name,
         "frame_id": payload.frame_id,
+        "parser": payload.parser,
+        "binary_header": payload.binary_header,
         "preserved_layers": len(payload.layers),
         "layers": [layer.model_dump() for layer in payload.layers],
     }
@@ -1822,6 +1938,7 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             "professional_source": {
                 "source_type": document["source_type"],
                 "layer_id": layer["id"],
+                **({"parser": document["parser"]} if document.get("parser") else {}),
             },
         }
         if layer.get("text"):
@@ -1842,6 +1959,8 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             "file_name": document["file_name"],
             "frame_id": document["frame_id"],
             "design_document_id": document["id"],
+            **({"parser": document["parser"]} if document.get("parser") else {}),
+            **({"binary_header": document["binary_header"]} if document.get("binary_header") else {}),
         },
         "nodes": nodes,
     }
