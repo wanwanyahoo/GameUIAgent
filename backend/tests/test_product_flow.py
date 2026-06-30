@@ -5,6 +5,7 @@ from zlib import compress
 from fastapi.testclient import TestClient
 
 from app.main import (
+    MAX_FIGMA_IMAGE_FILL_BYTES,
     app,
     configure_inference_provider,
     configure_object_storage,
@@ -1271,6 +1272,215 @@ def test_professional_import_source_uses_configured_figma_api(monkeypatch):
     text_node = imported["ir"]["nodes"][3]
     assert text_node["text"]["content"] == "BUY"
     assert text_node["text"]["style"] == {"font": "Inter", "font_size": 32}
+
+
+def test_figma_import_downloads_image_fills_to_object_storage(tmp_path, monkeypatch):
+    object_store_path = tmp_path / "figma-image-objects"
+    configure_persistent_store(str(tmp_path / "figma-images.sqlite3"))
+    configure_object_storage(str(object_store_path))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Figma Image UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1024, "height": 768},
+        },
+    ).json()
+    calls: list[str] = []
+
+    class FakeResponse:
+        def __init__(self, json_payload: dict[str, object] | None = None, content: bytes = b"") -> None:
+            self._json_payload = json_payload
+            self.content = content
+            self.headers = {"content-type": "image/png"} if content else {}
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self._json_payload or {}
+
+    def fake_figma_get(url: str, **_kwargs):
+        calls.append(url)
+        if url == "https://api.figma.com/v1/files/gameuiagent-shop/nodes?ids=12%3A34":
+            return FakeResponse(
+                {
+                    "nodes": {
+                        "12:34": {
+                            "document": {
+                                "id": "12:34",
+                                "name": "Shop HUD Frame",
+                                "type": "FRAME",
+                                "absoluteBoundingBox": {"x": 0, "y": 0, "width": 1024, "height": 768},
+                                "children": [
+                                    {
+                                        "id": "12:40",
+                                        "name": "Hero Splash Art",
+                                        "type": "RECTANGLE",
+                                        "absoluteBoundingBox": {"x": 80, "y": 72, "width": 640, "height": 360},
+                                        "fills": [{"type": "IMAGE", "imageRef": "hero-ref"}],
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                }
+            )
+        if url == "https://api.figma.com/v1/images/gameuiagent-shop?ids=12%3A40&format=png":
+            return FakeResponse({"images": {"12:40": "https://figma.example/hero-splash.png"}})
+        raise AssertionError(f"Unexpected Figma request: {url}")
+
+    class FakeStreamResponse:
+        headers = {"content-type": "image/png", "content-length": "25"}
+
+        def __enter__(self) -> "FakeStreamResponse":
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self):
+            yield b"\x89PNG\r\n\x1a\nfigma-image-bytes"
+
+    def fake_figma_stream(method: str, url: str, **_kwargs):
+        assert method == "GET"
+        assert url == "https://figma.example/hero-splash.png"
+        calls.append(url)
+        return FakeStreamResponse()
+
+    monkeypatch.setenv("FIGMA_API_TOKEN", "figma-test-token")
+    monkeypatch.setattr("app.main.httpx.get", fake_figma_get)
+    monkeypatch.setattr("app.main.httpx.stream", fake_figma_stream)
+
+    response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "figma",
+            "figma_url": "https://www.figma.com/file/gameuiagent-shop/Shop-HUD",
+            "frame_id": "12:34",
+            "parser": "figma-api",
+        },
+    )
+
+    assert response.status_code == 201
+    imported = response.json()
+    assert calls == [
+        "https://api.figma.com/v1/files/gameuiagent-shop/nodes?ids=12%3A34",
+        "https://api.figma.com/v1/images/gameuiagent-shop?ids=12%3A40&format=png",
+        "https://figma.example/hero-splash.png",
+    ]
+    image_layer = imported["design_document"]["layers"][1]
+    assert image_layer["image_asset_id"].startswith("ast_")
+    assert image_layer["image_url"].endswith(f"/assets/{image_layer['image_asset_id']}/download")
+    assert imported["ir"]["nodes"][2]["professional_source"]["image_asset_id"] == image_layer["image_asset_id"]
+    asset = store["assets"][image_layer["image_asset_id"]]
+    assert asset["source"] == "figma_image"
+    assert asset["metadata"]["figma_node_id"] == "12:40"
+    assert "figma_image_url" not in asset["metadata"]
+    assert (object_store_path / asset["metadata"]["storage_key"]).read_bytes() == b"\x89PNG\r\n\x1a\nfigma-image-bytes"
+
+
+def test_figma_import_skips_oversized_image_fills(tmp_path, monkeypatch):
+    configure_persistent_store(str(tmp_path / "figma-oversized.sqlite3"))
+    configure_object_storage(str(tmp_path / "figma-oversized-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Figma Oversized Image UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1024, "height": 768},
+        },
+    ).json()
+
+    class FakeResponse:
+        def __init__(self, json_payload: dict[str, object]) -> None:
+            self._json_payload = json_payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self._json_payload
+
+    def fake_figma_get(url: str, **_kwargs):
+        if url == "https://api.figma.com/v1/files/gameuiagent-shop/nodes?ids=12%3A34":
+            return FakeResponse(
+                {
+                    "nodes": {
+                        "12:34": {
+                            "document": {
+                                "id": "12:34",
+                                "name": "Shop HUD Frame",
+                                "type": "FRAME",
+                                "absoluteBoundingBox": {"x": 0, "y": 0, "width": 1024, "height": 768},
+                                "children": [
+                                    {
+                                        "id": "12:40",
+                                        "name": "Oversized Hero Art",
+                                        "type": "RECTANGLE",
+                                        "absoluteBoundingBox": {"x": 80, "y": 72, "width": 640, "height": 360},
+                                        "fills": [{"type": "IMAGE", "imageRef": "hero-ref"}],
+                                    }
+                                ],
+                            }
+                        }
+                    }
+                }
+            )
+        if url == "https://api.figma.com/v1/images/gameuiagent-shop?ids=12%3A40&format=png":
+            return FakeResponse({"images": {"12:40": "https://figma.example/oversized-hero.png"}})
+        raise AssertionError(f"Unexpected Figma request: {url}")
+
+    class FakeOversizedStreamResponse:
+        headers = {"content-type": "image/png", "content-length": str(MAX_FIGMA_IMAGE_FILL_BYTES + 1)}
+
+        def __enter__(self) -> "FakeOversizedStreamResponse":
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_bytes(self):
+            raise AssertionError("oversized response should be rejected before reading body")
+
+    def fake_figma_stream(method: str, url: str, **_kwargs):
+        assert method == "GET"
+        assert url == "https://figma.example/oversized-hero.png"
+        return FakeOversizedStreamResponse()
+
+    monkeypatch.setenv("FIGMA_API_TOKEN", "figma-test-token")
+    monkeypatch.setattr("app.main.httpx.get", fake_figma_get)
+    monkeypatch.setattr("app.main.httpx.stream", fake_figma_stream)
+
+    response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "figma",
+            "figma_url": "https://www.figma.com/file/gameuiagent-shop/Shop-HUD",
+            "frame_id": "12:34",
+            "parser": "figma-api",
+        },
+    )
+
+    assert response.status_code == 201
+    imported = response.json()
+    image_layer = imported["design_document"]["layers"][1]
+    assert "image_asset_id" not in image_layer
+    assert imported["parse_summary"]["warnings"] == [
+        "Figma image download skipped for node 12:40: image exceeds 25MB limit."
+    ]
 
 
 def test_professional_import_source_parses_uploaded_psd_binary_header(tmp_path):

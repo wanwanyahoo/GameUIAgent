@@ -132,6 +132,9 @@ class ProfessionalLayer(BaseModel):
     component_key: str | None = None
     auto_layout: dict[str, Any] | None = None
     constraints: dict[str, Any] | None = None
+    image_ref: str | None = None
+    image_asset_id: str | None = None
+    image_url: str | None = None
     opacity: float | None = None
     visible: bool | None = None
     is_group: bool | None = None
@@ -194,6 +197,7 @@ object_storage: LocalObjectStorage = create_object_storage()
 worker_token: str | None = getenv("GAMEUIAGENT_WORKER_TOKEN")
 inference_provider_name = getenv("GAMEUIAGENT_INFERENCE_PROVIDER", "local-deterministic")
 MAX_PNG_ALPHA_SEGMENTATION_PIXELS = 2048 * 2048
+MAX_FIGMA_IMAGE_FILL_BYTES = 25 * 1024 * 1024
 
 
 def configure_persistent_store(db_path: str) -> None:
@@ -2353,7 +2357,7 @@ def parse_professional_import_source(
 ) -> dict[str, Any]:
     if payload.source_type == "figma":
         if getenv("FIGMA_API_TOKEN"):
-            return parse_figma_api_source(payload)
+            return parse_figma_api_source(project, payload)
         return {
             "parser": payload.parser,
             "layers": mock_layers_for_import_source(project, payload.source_type),
@@ -2395,7 +2399,7 @@ def parse_professional_import_source(
     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported source type")
 
 
-def parse_figma_api_source(payload: ProfessionalImportSourceRequest) -> dict[str, Any]:
+def parse_figma_api_source(project: dict[str, Any], payload: ProfessionalImportSourceRequest) -> dict[str, Any]:
     file_key = extract_figma_file_key(str(payload.figma_url))
     frame_id = payload.frame_id
     if not frame_id:
@@ -2413,11 +2417,13 @@ def parse_figma_api_source(payload: ProfessionalImportSourceRequest) -> dict[str
     frame_node = ((payload_json.get("nodes") or {}).get(frame_id) or {}).get("document")
     if not isinstance(frame_node, dict):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Figma frame not found")
+    layers = figma_node_to_layers(frame_node)
+    warnings = attach_figma_image_assets(project, file_key, layers)
     return {
         "parser": payload.parser,
         "layer_source": "figma-api",
-        "layers": figma_node_to_layers(frame_node),
-        "warnings": [],
+        "layers": layers,
+        "warnings": warnings,
     }
 
 
@@ -2441,6 +2447,7 @@ def figma_node_to_layers(node: dict[str, Any], parent_id: str | None = None) -> 
         component_key=figma_component_key(node),
         auto_layout=figma_auto_layout(node),
         constraints=node.get("constraints") if isinstance(node.get("constraints"), dict) else None,
+        image_ref=figma_image_ref(node),
         is_group=node.get("type") in {"FRAME", "GROUP", "SECTION"},
     )
     layers = [layer]
@@ -2487,6 +2494,111 @@ def figma_component_key(node: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def figma_image_ref(node: dict[str, Any]) -> str | None:
+    fills = node.get("fills")
+    if not isinstance(fills, list):
+        return None
+    for fill in fills:
+        if isinstance(fill, dict) and fill.get("type") == "IMAGE" and isinstance(fill.get("imageRef"), str):
+            return fill["imageRef"]
+    return None
+
+
+def attach_figma_image_assets(project: dict[str, Any], file_key: str, layers: list[ProfessionalLayer]) -> list[str]:
+    image_layers = [layer for layer in layers if layer.image_ref]
+    if not image_layers:
+        return []
+    if not object_storage.durable:
+        return ["Figma image fills were detected but object storage is not configured."]
+    warnings: list[str] = []
+    image_urls = fetch_figma_image_urls(file_key, [layer.id for layer in image_layers])
+    for layer in image_layers:
+        image_url = image_urls.get(layer.id)
+        if not image_url:
+            warnings.append(f"Figma image export missing for node {layer.id}.")
+            continue
+        try:
+            content, content_type = download_figma_image_fill(image_url)
+        except httpx.HTTPError:
+            warnings.append(f"Figma image download failed for node {layer.id}.")
+            continue
+        except ValueError as exc:
+            warnings.append(f"Figma image download skipped for node {layer.id}: {exc}.")
+            continue
+        asset = store_figma_image_asset(project, layer, content, content_type)
+        layer.image_asset_id = asset["id"]
+        layer.image_url = asset["url"]
+    return warnings
+
+
+def download_figma_image_fill(image_url: str) -> tuple[bytes, str]:
+    chunks: list[bytes] = []
+    total_bytes = 0
+    with httpx.stream("GET", image_url, timeout=30) as response:
+        response.raise_for_status()
+        content_length = response.headers.get("content-length")
+        if content_length and int(content_length) > MAX_FIGMA_IMAGE_FILL_BYTES:
+            raise ValueError("image exceeds 25MB limit")
+        for chunk in response.iter_bytes():
+            total_bytes += len(chunk)
+            if total_bytes > MAX_FIGMA_IMAGE_FILL_BYTES:
+                raise ValueError("image exceeds 25MB limit")
+            chunks.append(chunk)
+        return b"".join(chunks), response.headers.get("content-type", "image/png")
+
+
+def fetch_figma_image_urls(file_key: str, node_ids: list[str]) -> dict[str, str]:
+    if not node_ids:
+        return {}
+    ids = ",".join(quote(node_id, safe="") for node_id in node_ids)
+    try:
+        response = httpx.get(
+            f"https://api.figma.com/v1/images/{file_key}?ids={ids}&format=png",
+            headers={"X-Figma-Token": str(getenv("FIGMA_API_TOKEN"))},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Figma image export failed") from exc
+    images = payload.get("images")
+    if not isinstance(images, dict):
+        return {}
+    return {str(node_id): str(url) for node_id, url in images.items() if isinstance(url, str)}
+
+
+def store_figma_image_asset(
+    project: dict[str, Any],
+    layer: ProfessionalLayer,
+    content: bytes,
+    content_type: str,
+) -> dict[str, Any]:
+    stored = object_storage.put(project["id"], f"{layer.id}-{layer.name}.png", content, content_type)
+    asset = {
+        "id": make_id("ast"),
+        "project_id": project["id"],
+        "type": "figma_image",
+        "name": layer.name,
+        "url": "",
+        "source": "figma_image",
+        "metadata": {
+            "width": layer.rect["width"],
+            "height": layer.rect["height"],
+            "usage": "figma_image_fill",
+            "storage_key": stored.key,
+            "size_bytes": stored.size_bytes,
+            "sha256": stored.sha256,
+            "content_type": stored.content_type,
+            "figma_node_id": layer.id,
+            "figma_image_ref": layer.image_ref,
+        },
+    }
+    asset["url"] = f"/api/projects/{project['id']}/assets/{asset['id']}/download"
+    store["assets"][asset["id"]] = asset
+    record_asset_version(asset, "created")
+    return asset
 
 
 def figma_text_style(node: dict[str, Any]) -> dict[str, Any] | None:
@@ -2826,6 +2938,11 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             }
         if layer.get("component_key"):
             node["component"] = {"key": layer["component_key"]}
+        if layer.get("image_asset_id"):
+            node["professional_source"]["image_asset_id"] = layer["image_asset_id"]
+            node["source_asset_id"] = layer["image_asset_id"]
+        if layer.get("image_url"):
+            node["professional_source"]["image_url"] = layer["image_url"]
         if layer.get("auto_layout") or layer.get("constraints"):
             node["layout"] = {
                 **({"auto_layout": layer["auto_layout"]} if layer.get("auto_layout") else {}),
