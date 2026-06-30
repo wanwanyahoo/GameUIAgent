@@ -1982,17 +1982,46 @@ def apply_correction_to_latest_ir(project: dict[str, Any], correction: dict[str,
     return node
 
 
+def ensure_studio_seed_asset(project: dict[str, Any]) -> dict[str, Any]:
+    asset_id = f"ast_seed_{project['id']}"
+    asset = store["assets"].get(asset_id)
+    if asset and asset["project_id"] == project["id"]:
+        return asset
+    asset = {
+        "id": asset_id,
+        "project_id": project["id"],
+        "type": "reference_image",
+        "name": f"{project['name']} Studio Seed",
+        "url": f"/api/projects/{project['id']}/assets/{asset_id}/download",
+        "source": "studio_seed",
+        "metadata": {
+            "width": project["canvas"]["width"],
+            "height": project["canvas"]["height"],
+            "usage": "layered_slice",
+            "tags": ["studio", "seed", project["target_engine"]],
+        },
+    }
+    store["assets"][asset_id] = asset
+    record_asset_version(asset, "created")
+    return asset
+
+
 def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
     studio = store["studio_states"].get(project["id"])
     if studio:
+        selected_asset_id = studio.get("active_selection", {}).get("selected_asset_id")
+        if selected_asset_id not in store["assets"]:
+            studio["active_selection"]["selected_asset_id"] = ensure_studio_seed_asset(project)["id"]
+            store.flush()
         return refresh_studio_runtime_state(project, studio)
     ir = latest_project_ir(project) or build_demo_ir(project)
     button_node = next((node for node in ir["nodes"] if node["type"] == "button"), ir["nodes"][0])
+    seed_asset = ensure_studio_seed_asset(project)
     studio = {
         "project_id": project["id"],
         "active_selection": {
             "selected_layer_id": button_node["id"],
-            "selected_asset_id": "asset_slice",
+            "selected_asset_id": seed_asset["id"],
             "active_task_id": "timeline_slice",
         },
         "action_dock": [
@@ -2032,6 +2061,7 @@ def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
     }
     apply_studio_layered_slice_summary(studio, ir)
     store["studio_states"][project["id"]] = studio
+    store.flush()
     return studio
 
 

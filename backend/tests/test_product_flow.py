@@ -3678,7 +3678,17 @@ def test_end_to_end_register_project_ai_export(tmp_path):
     assert "action_dock" in studio
     assert "export_wizard" in studio
 
-    # 12. Create team
+    # 12. Default Studio selected asset must be a real, sliceable asset.
+    selected_asset_id = studio["active_selection"]["selected_asset_id"]
+    segmentation_resp = client.post(
+        f"/api/projects/{project_id}/segmentations",
+        headers=headers,
+        json={"asset_id": selected_asset_id},
+    )
+    assert segmentation_resp.status_code == 201
+    assert segmentation_resp.json()["source_asset_id"] == selected_asset_id
+
+    # 13. Create team
     team_resp = client.post("/api/teams", headers=headers, json={"name": "E2E Team"})
     assert team_resp.status_code == 201
     team = team_resp.json()
@@ -3686,12 +3696,12 @@ def test_end_to_end_register_project_ai_export(tmp_path):
     assert len(team["members"]) == 1
     assert team["members"][0]["role"] == "owner"
 
-    # 13. List teams
+    # 14. List teams
     teams_resp = client.get("/api/teams", headers=headers)
     assert teams_resp.status_code == 200
     assert len(teams_resp.json()["teams"]) >= 1
 
-    # 14. Get usage
+    # 15. Get usage
     usage_resp = client.get("/api/user/usage", headers=headers)
     assert usage_resp.status_code == 200
     assert "events" in usage_resp.json()
@@ -3724,5 +3734,4 @@ def test_production_readiness_and_metrics(tmp_path):
     assert "assets" in data
     assert "audits" in data
     assert "exports" in data
-
 
