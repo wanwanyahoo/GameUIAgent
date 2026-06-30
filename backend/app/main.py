@@ -2701,11 +2701,30 @@ def build_manifest_professional_source(ir: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_manifest_asset_ir_summary(ir: dict[str, Any]) -> dict[str, Any]:
+    source = ir.get("source_asset", {})
+    nodes = [
+        {
+            "id": node["id"],
+            "type": node["type"],
+            "name": node["name"],
+            "rect": node["rect"],
+            **({"segmentation_source": node["segmentation_source"]} if node.get("segmentation_source") else {}),
+        }
+        for node in ir.get("nodes", [])
+        if node.get("type") != "canvas"
+    ]
     return {
         "id": ir["id"],
         "version": ir.get("version", ""),
         "node_count": len(ir.get("nodes", [])),
         "engine_targets": ir.get("engine_targets", []),
+        **({"segmentation_source": source["segmentation_source"]} if source.get("segmentation_source") else {}),
+        **(
+            {"layered_slice_count": sum(1 for node in nodes if node.get("segmentation_source") == "qwen-layered-slice")}
+            if source.get("segmentation_source") == "qwen-layered-slice"
+            else {}
+        ),
+        "nodes": nodes,
     }
 
 

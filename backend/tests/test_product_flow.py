@@ -901,6 +901,24 @@ def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkey
         assert segmentation["slices"][1]["rect"] == {"x": 220, "y": 330, "width": 180, "height": 72}
         assert segmentation["ir"]["nodes"][1]["name"] == "Generated Panel"
         assert segmentation["ir"]["source_asset"]["segmentation_source"] == "qwen-layered-slice"
+
+        export_response = client.post(
+            f"/api/projects/{project['id']}/exports",
+            headers=headers,
+            json={"ir_id": segmentation["ir"]["id"], "target_engine": "unity"},
+        )
+
+        assert export_response.status_code == 201
+        manifest_ir = export_response.json()["package"]["manifest"]["asset_ir"]
+        assert manifest_ir["segmentation_source"] == "qwen-layered-slice"
+        assert manifest_ir["layered_slice_count"] == 2
+        assert manifest_ir["nodes"][1] == {
+            "id": "qwen_cta_button",
+            "type": "button",
+            "name": "Generated CTA Button",
+            "rect": {"x": 220, "y": 330, "width": 180, "height": 72},
+            "segmentation_source": "qwen-layered-slice",
+        }
     finally:
         configure_inference_provider("local-deterministic")
 
