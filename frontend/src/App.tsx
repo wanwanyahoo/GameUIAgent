@@ -32,10 +32,28 @@ const coreChainSelfTest = [
   "Unity plugin import",
   "Studio timeline synced"
 ] as const;
-const remainingCompletenessGaps = [
-  "team roles",
-  "password reset",
-  "docs center"
+const accountPlatformCapabilities = [
+  "Team Roles",
+  "Password Reset",
+  "Docs Center"
+] as const;
+const teamRoleMatrix = [
+  "Owner",
+  "Admin",
+  "Designer",
+  "Developer",
+  "Viewer"
+] as const;
+const passwordResetFlow = [
+  "Request email",
+  "Reset token",
+  "Rotate password hash",
+  "Login with new password"
+] as const;
+const docsCenterGuides = [
+  "Getting Started",
+  "Developer API",
+  "Engine Plugins"
 ] as const;
 
 export function App() {
@@ -50,6 +68,7 @@ export function App() {
           <a href="#studio">AI Studio</a>
           <a href="#workflow">Workflow</a>
           <a href="#engines">Engines</a>
+          <a href="#docs">Docs</a>
           <a href="#pricing">Pricing</a>
         </nav>
         <a className="nav-cta" href="#studio">
@@ -225,13 +244,52 @@ export function App() {
           <div>
             <p className="eyebrow">Completeness Status</p>
             <h3>Core engine chain: verified</h3>
-            <small>Remaining gaps</small>
+            <small>Account and docs: covered</small>
           </div>
           <div className="control-row">
-            {remainingCompletenessGaps.map((gap) => (
-              <b key={gap}>{gap}</b>
+            {accountPlatformCapabilities.map((capability) => (
+              <b key={capability}>{capability}</b>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="section" id="docs">
+        <div className="section-heading">
+          <p className="eyebrow">Account Platform</p>
+          <h2>Team roles, password recovery and docs center are covered.</h2>
+        </div>
+        <div className="account-grid">
+          <article className="account-card">
+            <span>RBAC</span>
+            <h3>Team Roles</h3>
+            <p>Invite game UI collaborators and assign scoped production permissions.</p>
+            <div className="control-row">
+              {teamRoleMatrix.map((role) => (
+                <b key={role}>{role}</b>
+              ))}
+            </div>
+          </article>
+          <article className="account-card">
+            <span>Auth</span>
+            <h3>Password Reset</h3>
+            <p>Issue reset tokens, rotate salted password hashes and invalidate used tokens.</p>
+            <div className="control-row">
+              {passwordResetFlow.map((step) => (
+                <b key={step}>{step}</b>
+              ))}
+            </div>
+          </article>
+          <article className="account-card">
+            <span>Docs</span>
+            <h3>Docs Center</h3>
+            <p>Product onboarding, Developer API and Engine Plugins guides are exposed together.</p>
+            <div className="control-row">
+              {docsCenterGuides.map((guide) => (
+                <b key={guide}>{guide}</b>
+              ))}
+            </div>
+          </article>
         </div>
       </section>
 

@@ -229,6 +229,24 @@ export const platformCapabilities: Capability[] = [
     title: "Credits and Billing",
     summary: "Free, subscription and purchased credits with concurrent task quotas.",
     group: "platform"
+  },
+  {
+    id: "team-roles",
+    title: "Team Roles",
+    summary: "Owner, admin, designer, developer and viewer roles for game UI production teams.",
+    group: "platform"
+  },
+  {
+    id: "password-reset",
+    title: "Password Reset",
+    summary: "Reset-token flow rotates salted hashes and restores access without losing projects.",
+    group: "platform"
+  },
+  {
+    id: "docs-center",
+    title: "Docs Center",
+    summary: "Getting started, Developer API and Engine Plugins documentation in one hub.",
+    group: "platform"
   }
 ];
 

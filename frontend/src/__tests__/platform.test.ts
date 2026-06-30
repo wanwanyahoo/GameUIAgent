@@ -43,7 +43,10 @@ describe("platform model", () => {
         "unreal-export",
         "engine-mcp",
         "developer-api",
-        "billing"
+        "billing",
+        "team-roles",
+        "password-reset",
+        "docs-center"
       ].every((id) => ids.includes(id)),
       true
     );

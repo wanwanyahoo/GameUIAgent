@@ -25,6 +25,28 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=6)
+
+
+class TeamRequest(BaseModel):
+    name: str
+
+
+class TeamMemberRequest(BaseModel):
+    email: EmailStr
+    role: str
+
+
+class TeamRoleUpdateRequest(BaseModel):
+    role: str
+
+
 class ProjectRequest(BaseModel):
     name: str
     target_engine: str
@@ -134,6 +156,9 @@ store: dict[str, Any] = {
     "usage_events": {},
     "rate_limits": {},
     "studio_states": {},
+    "teams": {},
+    "memberships": {},
+    "password_reset_tokens": {},
 }
 
 
@@ -199,6 +224,9 @@ def marketing_capabilities() -> dict[str, Any]:
         ("engine-mcp", "Engine MCP", "Connect editor plugins with platform automation."),
         ("professional-import", "PSD / PSB / Figma Import", "Preserve professional design layers."),
         ("developer-api", "Developer API", "API keys, webhook, polling, cancellation and cost estimates."),
+        ("team-roles", "Team Roles", "Invite collaborators with owner, admin, designer, developer and viewer roles."),
+        ("password-reset", "Password Reset", "Issue reset tokens and rotate salted password hashes."),
+        ("docs-center", "Docs Center", "Expose onboarding, Developer API and engine plugin guides."),
     ]
     return {
         "capabilities": [
@@ -231,6 +259,101 @@ def login(payload: LoginRequest) -> dict[str, str]:
     token = make_id("tok")
     store["tokens"][token] = payload.email
     return {"access_token": token, "token_type": "bearer"}
+
+
+@app.post("/api/auth/password-reset/request")
+def request_password_reset(payload: PasswordResetRequest) -> dict[str, Any]:
+    user = store["users"].get(payload.email)
+    if not user:
+        return {"status": "queued", "delivery": "email"}
+    reset_token = make_id("rst")
+    store["password_reset_tokens"][reset_token] = {"email": payload.email, "user_id": user["id"]}
+    return {"status": "queued", "delivery": "email", "expires_in": 900}
+
+
+@app.post("/api/auth/password-reset/confirm")
+def confirm_password_reset(payload: PasswordResetConfirmRequest) -> dict[str, str]:
+    reset = store["password_reset_tokens"].pop(payload.token, None)
+    if not reset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Reset token not found")
+    user = store["users"].get(reset["email"])
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    user["password_hash"] = hash_password(payload.new_password)
+    return {"status": "password_reset"}
+
+
+@app.post("/api/teams", status_code=status.HTTP_201_CREATED)
+def create_team(payload: TeamRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    team = {
+        "id": make_id("team"),
+        "name": payload.name,
+        "owner_id": user["id"],
+    }
+    store["teams"][team["id"]] = team
+    membership = create_team_membership(team, user["email"], "owner", user["id"])
+    return format_team(team, [membership])
+
+
+@app.get("/api/teams")
+def list_teams(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    teams = []
+    for team in store["teams"].values():
+        members = team_memberships(team["id"])
+        if any(member["email"] == user["email"] for member in members):
+            teams.append(format_team(team, members))
+    return {"teams": teams}
+
+
+@app.post("/api/teams/{team_id}/members", status_code=status.HTTP_201_CREATED)
+def invite_team_member(
+    team_id: str,
+    payload: TeamMemberRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    team = require_team_admin(team_id, user)
+    membership = create_team_membership(team, str(payload.email), payload.role)
+    return membership
+
+
+@app.patch("/api/teams/{team_id}/members/{membership_id}")
+def update_team_member_role(
+    team_id: str,
+    membership_id: str,
+    payload: TeamRoleUpdateRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    require_team_admin(team_id, user)
+    validate_team_role(payload.role)
+    membership = store["memberships"].get(membership_id)
+    if not membership or membership["team_id"] != team_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
+    membership["role"] = payload.role
+    return membership
+
+
+@app.get("/api/docs")
+def docs_center() -> dict[str, Any]:
+    return {
+        "docs": [
+            {
+                "slug": "getting-started",
+                "title": "Getting Started",
+                "sections": ["Create project", "Import or generate", "Slice UI", "Export package"],
+            },
+            {
+                "slug": "developer-api",
+                "title": "Developer API",
+                "sections": ["Authentication", "Cost estimate", "Execute", "Poll", "Cancel", "Webhook"],
+            },
+            {
+                "slug": "engine-plugins",
+                "title": "Engine Plugins",
+                "sections": ["Plugin auth", "Project sync", "Manifest", "Download", "Import log"],
+                "engines": ["Unity", "Cocos", "Godot", "Unreal"],
+            },
+        ]
+    }
 
 
 @app.post("/api/projects", status_code=status.HTTP_201_CREATED)
@@ -721,6 +844,65 @@ def restyle_engine_snapshot(
         "style_prompt": payload.style_prompt,
         "replacement_manifest": manifest,
     }
+
+
+def validate_team_role(role: str) -> None:
+    if role not in {"owner", "admin", "designer", "developer", "viewer"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported team role")
+
+
+def create_team_membership(
+    team: dict[str, Any],
+    email: str,
+    role: str,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    validate_team_role(role)
+    membership = {
+        "id": make_id("mem"),
+        "team_id": team["id"],
+        "email": email,
+        "user_id": user_id,
+        "role": role,
+        "status": "active" if user_id else "invited",
+    }
+    store["memberships"][membership["id"]] = membership
+    return membership
+
+
+def team_memberships(team_id: str) -> list[dict[str, Any]]:
+    return [
+        membership
+        for membership in store["memberships"].values()
+        if membership["team_id"] == team_id
+    ]
+
+
+def format_team(team: dict[str, Any], members: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "id": team["id"],
+        "name": team["name"],
+        "owner_id": team["owner_id"],
+        "member_count": len(members),
+        "members": members,
+    }
+
+
+def require_team_admin(team_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    team = store["teams"].get(team_id)
+    if not team:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
+    membership = next(
+        (
+            member
+            for member in team_memberships(team_id)
+            if member["email"] == user["email"] and member["role"] in {"owner", "admin"}
+        ),
+        None,
+    )
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Team admin role required")
+    return team
 
 
 def require_project(project_id: str, user: dict[str, Any]) -> dict[str, Any]:

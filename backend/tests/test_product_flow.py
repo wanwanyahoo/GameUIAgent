@@ -40,6 +40,9 @@ def test_homepage_capabilities_match_platform_scope():
         "cocos-export",
         "godot-export",
         "engine-mcp",
+        "team-roles",
+        "password-reset",
+        "docs-center",
     }.issubset(capabilities)
 
 
@@ -57,6 +60,99 @@ def test_auth_stores_salted_password_hashes():
     assert stored_hash.startswith("pbkdf2_sha256$")
     assert password not in stored_hash
     assert len(stored_hash.split("$")) == 4
+
+
+def test_password_reset_rotates_password_and_consumes_token():
+    email = f"reset-{uuid4().hex}@gameuiagent.dev"
+    old_password = "old-secret"
+    new_password = "new-secret"
+    client.post(
+        "/api/auth/register",
+        json={"email": email, "password": old_password, "name": "Reset User"},
+    )
+
+    request_response = client.post("/api/auth/password-reset/request", json={"email": email})
+
+    assert request_response.status_code == 200
+    assert "reset_token" not in request_response.json()
+    reset_token = next(
+        token
+        for token, reset in store["password_reset_tokens"].items()
+        if reset["email"] == email
+    )
+    assert reset_token.startswith("rst_")
+
+    confirm_response = client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": reset_token, "new_password": new_password},
+    )
+
+    assert confirm_response.status_code == 200
+    assert confirm_response.json()["status"] == "password_reset"
+    assert client.post(
+        "/api/auth/login",
+        json={"email": email, "password": old_password},
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login",
+        json={"email": email, "password": new_password},
+    ).status_code == 200
+    assert client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": reset_token, "new_password": "another-secret"},
+    ).status_code == 404
+
+
+def test_team_roles_allow_owner_to_manage_members():
+    headers = auth_headers()
+
+    team_response = client.post("/api/teams", headers=headers, json={"name": "Live Ops UI Team"})
+
+    assert team_response.status_code == 201
+    team = team_response.json()
+    assert team["name"] == "Live Ops UI Team"
+    assert team["members"][0]["role"] == "owner"
+
+    invite_response = client.post(
+        f"/api/teams/{team['id']}/members",
+        headers=headers,
+        json={"email": "artist@gameuiagent.dev", "role": "designer"},
+    )
+
+    assert invite_response.status_code == 201
+    membership = invite_response.json()
+    assert membership["email"] == "artist@gameuiagent.dev"
+    assert membership["role"] == "designer"
+
+    update_response = client.patch(
+        f"/api/teams/{team['id']}/members/{membership['id']}",
+        headers=headers,
+        json={"role": "developer"},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["role"] == "developer"
+
+    teams_response = client.get("/api/teams", headers=headers)
+    assert teams_response.status_code == 200
+    listed_team = teams_response.json()["teams"][0]
+    assert listed_team["member_count"] == 2
+    assert {member["role"] for member in listed_team["members"]} == {"owner", "developer"}
+
+
+def test_docs_center_returns_product_api_and_plugin_guides():
+    response = client.get("/api/docs")
+
+    assert response.status_code == 200
+    docs = response.json()["docs"]
+    assert [doc["slug"] for doc in docs] == [
+        "getting-started",
+        "developer-api",
+        "engine-plugins",
+    ]
+    assert docs[1]["sections"] == ["Authentication", "Cost estimate", "Execute", "Poll", "Cancel", "Webhook"]
+    assert "Unity" in docs[2]["engines"]
+    assert "Unreal" in docs[2]["engines"]
 
 
 def test_project_ai_segmentation_and_unity_export_flow():

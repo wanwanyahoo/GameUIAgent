@@ -131,14 +131,20 @@ describe("App", () => {
     assert.match(html, /Studio timeline synced/);
   });
 
-  it("renders the remaining completeness gaps for follow-up loops", () => {
+  it("renders completed account and docs center capabilities", () => {
     const html = renderToStaticMarkup(<App />);
 
     assert.match(html, /Completeness Status/);
     assert.match(html, /Core engine chain: verified/);
-    assert.match(html, /Remaining gaps/);
-    assert.match(html, /team roles/);
-    assert.match(html, /password reset/);
-    assert.match(html, /docs center/);
+    assert.match(html, /Account and docs: covered/);
+    assert.match(html, /Team Roles/);
+    assert.match(html, /Owner/);
+    assert.match(html, /Designer/);
+    assert.match(html, /Developer/);
+    assert.match(html, /Password Reset/);
+    assert.match(html, /Reset token/);
+    assert.match(html, /Docs Center/);
+    assert.match(html, /Developer API/);
+    assert.match(html, /Engine Plugins/);
   });
 });
