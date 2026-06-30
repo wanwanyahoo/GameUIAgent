@@ -7,11 +7,15 @@ import {
   createStudioAsset,
   createStudioSegmentation,
   copyStudioAsset,
+  cancelStudioAiJob,
   deleteStudioAsset,
   fetchStudioState,
+  getStudioAiJob,
   listStudioAssetVersions,
   listStudioAssets,
+  listStudioAiJobs,
   previewStudioExportWizard,
+  retryStudioAiJob,
   updateStudioAsset
 } from "../lib/studio-api";
 import { runStudioAction } from "../lib/studio-actions";
@@ -346,6 +350,39 @@ describe("studio API client", () => {
 
     assert.deepEqual(calls, ["ai", "segment", "correction", "export"]);
   });
+
+  it("manages queued Studio AI jobs", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/cancel")) {
+        return jsonResponse(jobDto({ status: "cancelled" }));
+      }
+      if (url.endsWith("/retry")) {
+        return jsonResponse(jobDto({ id: "job_retry", retry_of: "job_1", status: "queued" }));
+      }
+      if (url.endsWith("/job_1")) {
+        return jsonResponse(jobDto({ status: "queued" }));
+      }
+      return jsonResponse({ jobs: [jobDto({ status: "queued" })] });
+    };
+
+    const jobs = await listStudioAiJobs({ projectId: "prj_1", token: "tok_1", fetcher });
+    const job = await getStudioAiJob({ projectId: "prj_1", jobId: "job_1", token: "tok_1", fetcher });
+    const cancelled = await cancelStudioAiJob({ projectId: "prj_1", jobId: "job_1", token: "tok_1", fetcher });
+    const retried = await retryStudioAiJob({ projectId: "prj_1", jobId: "job_1", token: "tok_1", fetcher });
+
+    assert.equal(calls[0]?.url, "/api/projects/prj_1/ai/jobs");
+    assert.equal(calls[1]?.url, "/api/projects/prj_1/ai/jobs/job_1");
+    assert.equal(calls[2]?.url, "/api/projects/prj_1/ai/jobs/job_1/cancel");
+    assert.equal(calls[2]?.init?.method, "POST");
+    assert.equal(calls[3]?.url, "/api/projects/prj_1/ai/jobs/job_1/retry");
+    assert.equal(calls[3]?.init?.method, "POST");
+    assert.equal(jobs[0]?.id, "job_1");
+    assert.equal(job.status, "queued");
+    assert.equal(cancelled.status, "cancelled");
+    assert.equal(retried.retryOf, "job_1");
+  });
 });
 
 function jsonResponse(body: unknown): Response {
@@ -368,5 +405,25 @@ function assetDto(overrides: Partial<{
     url: "https://assets/shop-panel.png",
     source: "upload",
     metadata: { width: 1024, height: 512, usage: "source_ui", tags: overrides.tags ?? ["shop", "panel"] }
+  };
+}
+
+function jobDto(overrides: Partial<{
+  id: string;
+  status: string;
+  retry_of: string;
+}>) {
+  return {
+    id: overrides.id ?? "job_1",
+    project_id: "prj_1",
+    kind: "text_to_image",
+    prompt: "generate battle HUD",
+    status: overrides.status ?? "queued",
+    progress: overrides.status === "cancelled" ? 0 : 25,
+    execution_mode: "queued",
+    estimated_credits: 2,
+    result_asset: { id: "ast_generated" },
+    candidates: [{ asset_id: "ast_generated" }],
+    retry_of: overrides.retry_of
   };
 }

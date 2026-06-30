@@ -71,10 +71,14 @@ export type StudioAiJob = {
   projectId: string;
   kind: string;
   prompt: string;
+  status?: string;
+  progress?: number;
+  executionMode?: string;
   inputAsset?: { id: string } | null;
-  resultAsset: { id: string };
+  resultAsset?: { id: string };
   candidates: Array<{ assetId: string; rank?: number; score?: number }>;
   estimatedCredits: number;
+  retryOf?: string;
 };
 
 export type StudioSegmentation = {
@@ -140,10 +144,14 @@ type StudioAiJobDto = {
   project_id: string;
   kind: string;
   prompt: string;
+  status?: string;
+  progress?: number;
+  execution_mode?: string;
   input_asset?: { id: string } | null;
-  result_asset: { id: string };
-  candidates: Array<{ asset_id: string; rank?: number; score?: number }>;
+  result_asset?: { id: string };
+  candidates?: Array<{ asset_id: string; rank?: number; score?: number }>;
   estimated_credits: number;
+  retry_of?: string;
 };
 
 type StudioSegmentationDto = {
@@ -335,6 +343,64 @@ export async function createStudioAiJob(options: {
   return mapStudioAiJobDto(await response.json() as StudioAiJobDto);
 }
 
+export async function listStudioAiJobs(options: {
+  projectId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAiJob[]> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/ai/jobs`,
+    options.token,
+    options.fetcher
+  );
+  const dto = await response.json() as { jobs: StudioAiJobDto[] };
+  return dto.jobs.map(mapStudioAiJobDto);
+}
+
+export async function getStudioAiJob(options: {
+  projectId: string;
+  jobId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAiJob> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/ai/jobs/${options.jobId}`,
+    options.token,
+    options.fetcher
+  );
+  return mapStudioAiJobDto(await response.json() as StudioAiJobDto);
+}
+
+export async function cancelStudioAiJob(options: {
+  projectId: string;
+  jobId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAiJob> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/ai/jobs/${options.jobId}/cancel`,
+    options.token,
+    options.fetcher,
+    { method: "POST" }
+  );
+  return mapStudioAiJobDto(await response.json() as StudioAiJobDto);
+}
+
+export async function retryStudioAiJob(options: {
+  projectId: string;
+  jobId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAiJob> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/ai/jobs/${options.jobId}/retry`,
+    options.token,
+    options.fetcher,
+    { method: "POST" }
+  );
+  return mapStudioAiJobDto(await response.json() as StudioAiJobDto);
+}
+
 export async function createStudioSegmentation(options: {
   projectId: string;
   token: string;
@@ -429,14 +495,18 @@ function mapStudioAiJobDto(dto: StudioAiJobDto): StudioAiJob {
     projectId: dto.project_id,
     kind: dto.kind,
     prompt: dto.prompt,
+    status: dto.status,
+    progress: dto.progress,
+    executionMode: dto.execution_mode,
     inputAsset: dto.input_asset,
     resultAsset: dto.result_asset,
-    candidates: dto.candidates.map((candidate) => ({
+    candidates: (dto.candidates ?? []).map((candidate) => ({
       assetId: candidate.asset_id,
       rank: candidate.rank,
       score: candidate.score
     })),
-    estimatedCredits: dto.estimated_credits
+    estimatedCredits: dto.estimated_credits,
+    retryOf: dto.retry_of
   };
 }
 

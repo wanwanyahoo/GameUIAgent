@@ -869,6 +869,7 @@ def create_ai_job(
         "execution_mode": payload.execution_mode,
         "status": "queued" if payload.execution_mode == "queued" else "running",
         "progress": 0 if payload.execution_mode == "queued" else 50,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     append_audit_event(
         project["id"],
@@ -916,6 +917,98 @@ def create_ai_job(
             metadata={"result_asset_id": job.get("result_asset", {}).get("id")},
         )
     return job
+
+
+@app.get("/api/projects/{project_id}/ai/jobs")
+def list_project_ai_jobs(
+    project_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    jobs = [
+        job for job in store["jobs"].values()
+        if job["project_id"] == project["id"]
+    ]
+    jobs.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return {"jobs": jobs}
+
+
+@app.get("/api/projects/{project_id}/ai/jobs/{job_id}")
+def get_project_ai_job(
+    project_id: str,
+    job_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    return require_project_ai_job(project, job_id)
+
+
+@app.post("/api/projects/{project_id}/ai/jobs/{job_id}/cancel")
+def cancel_project_ai_job(
+    project_id: str,
+    job_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    job = require_project_ai_job(project, job_id)
+    if job["status"] in {"succeeded", "failed", "cancelled"}:
+        return job
+    job["status"] = "cancelled"
+    job["progress"] = 0
+    queue_item = job.get("queue")
+    if queue_item:
+        stored_queue_item = store["ai_job_queue"].get(queue_item["id"])
+        if stored_queue_item and stored_queue_item["status"] in {"queued", "locked"}:
+            stored_queue_item["status"] = "cancelled"
+            stored_queue_item["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+            job["queue"] = stored_queue_item
+    append_audit_event(
+        project["id"],
+        "ai_job_cancelled",
+        user["id"],
+        "ai_job",
+        job["id"],
+        status_value="cancelled",
+    )
+    store.flush()
+    return job
+
+
+@app.post("/api/projects/{project_id}/ai/jobs/{job_id}/retry", status_code=status.HTTP_201_CREATED)
+def retry_project_ai_job(
+    project_id: str,
+    job_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    original = require_project_ai_job(project, job_id)
+    payload = AiJobRequest(
+        kind=original["kind"],
+        prompt=original["prompt"],
+        style=original.get("style"),
+        size=original.get("parameters", {}).get("size", "landscape_16_9"),
+        input_asset_id=original.get("input_asset", {}).get("id") if original.get("input_asset") else None,
+        reference_asset_id=original.get("reference_asset", {}).get("id") if original.get("reference_asset") else None,
+        mask_asset_id=original.get("mask_asset", {}).get("id") if original.get("mask_asset") else None,
+        negative_prompt=original.get("parameters", {}).get("negative_prompt"),
+        seed=original.get("parameters", {}).get("seed"),
+        model=original.get("parameters", {}).get("model"),
+        count=original.get("parameters", {}).get("count", 1),
+        execution_mode="queued",
+    )
+    retry_job = create_ai_job(project_id, payload, user)
+    retry_job["retry_of"] = original["id"]
+    append_audit_event(
+        project["id"],
+        "ai_job_retried",
+        user["id"],
+        "ai_job",
+        retry_job["id"],
+        status_value=retry_job["status"],
+        metadata={"retry_of": original["id"]},
+    )
+    store.flush()
+    return retry_job
 
 
 @app.post("/api/worker/jobs/dequeue")
@@ -1875,6 +1968,13 @@ def require_project(project_id: str, user: dict[str, Any]) -> dict[str, Any]:
     if not project or project["owner_id"] != user["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     return project
+
+
+def require_project_ai_job(project: dict[str, Any], job_id: str) -> dict[str, Any]:
+    job = store["jobs"].get(job_id)
+    if not job or job["project_id"] != project["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI job not found")
+    return job
 
 
 def require_export(export_id: str, user: dict[str, Any]) -> dict[str, Any]:

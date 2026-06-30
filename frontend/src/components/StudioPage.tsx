@@ -3,6 +3,12 @@ import { useAuth } from "../lib/auth-context";
 import { getStudioStateApi, getProjectApi, type StudioState, type Project } from "../lib/projects-api";
 import { navigateTo } from "../lib/hash-router";
 import { runStudioAction } from "../lib/studio-actions";
+import {
+  cancelStudioAiJob,
+  listStudioAiJobs,
+  retryStudioAiJob,
+  type StudioAiJob,
+} from "../lib/studio-api";
 
 type StudioPageProps = {
   projectId: string;
@@ -25,6 +31,8 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [isPolling, setIsPolling] = useState(false);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [aiJobs, setAiJobs] = useState<StudioAiJob[]>([]);
+  const [activeJobActionId, setActiveJobActionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!projectId) {
@@ -41,13 +49,15 @@ export function StudioPage({ projectId }: StudioPageProps) {
       try {
         if (showLoading) setLoading(true);
         setError(null);
-        const [proj, state] = await Promise.all([
+        const [proj, state, jobs] = await Promise.all([
           getProjectApi(authToken, projectId),
           getStudioStateApi(authToken, projectId),
+          listStudioAiJobs({ projectId, token: authToken }),
         ]);
         if (cancelled) return;
         setProject(proj);
         setStudio(state);
+        setAiJobs(jobs);
       } catch (err: any) {
         if (cancelled) return;
         setError(err.message || "Failed to load studio");
@@ -112,12 +122,44 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setActionMessage(null);
       const result = await runStudioAction({ actionId, token, project, studio });
       setActionMessage(result.message);
-      const latestStudio = await getStudioStateApi(token, project.id);
+      const [latestStudio, latestJobs] = await Promise.all([
+        getStudioStateApi(token, project.id),
+        listStudioAiJobs({ projectId: project.id, token }),
+      ]);
       setStudio(latestStudio);
+      setAiJobs(latestJobs);
     } catch (err: any) {
       setError(err.message || "Failed to run Studio action");
     } finally {
       setActiveActionId(null);
+    }
+  };
+
+  const handleCancelJob = async (jobId: string) => {
+    if (!token || !project || activeJobActionId) return;
+    try {
+      setActiveJobActionId(jobId);
+      setError(null);
+      await cancelStudioAiJob({ projectId: project.id, jobId, token });
+      setAiJobs(await listStudioAiJobs({ projectId: project.id, token }));
+    } catch (err: any) {
+      setError(err.message || "Failed to cancel AI job");
+    } finally {
+      setActiveJobActionId(null);
+    }
+  };
+
+  const handleRetryJob = async (jobId: string) => {
+    if (!token || !project || activeJobActionId) return;
+    try {
+      setActiveJobActionId(jobId);
+      setError(null);
+      await retryStudioAiJob({ projectId: project.id, jobId, token });
+      setAiJobs(await listStudioAiJobs({ projectId: project.id, token }));
+    } catch (err: any) {
+      setError(err.message || "Failed to retry AI job");
+    } finally {
+      setActiveJobActionId(null);
     }
   };
 
@@ -229,6 +271,53 @@ export function StudioPage({ projectId }: StudioPageProps) {
                   <span className="step-status">{step.status}</span>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="sidebar-section">
+            <h3>AI Jobs</h3>
+            <div className="studio-jobs-list">
+              {aiJobs.length === 0 ? (
+                <p className="studio-empty-state">No AI jobs yet</p>
+              ) : (
+                aiJobs.slice(0, 5).map((job) => (
+                  <div key={job.id} className={`studio-job-card ${job.status || "unknown"}`}>
+                    <div className="studio-job-header">
+                      <span className="studio-job-kind">{job.kind}</span>
+                      <span className="studio-job-status">{job.status || "unknown"}</span>
+                    </div>
+                    <p className="studio-job-prompt">{job.prompt}</p>
+                    {typeof job.progress === "number" && (
+                      <div className="task-progress-bar">
+                        <div
+                          className="task-progress-fill"
+                          style={{ width: `${job.progress}%` }}
+                        ></div>
+                      </div>
+                    )}
+                    <div className="studio-job-actions">
+                      {job.status === "queued" || job.status === "running" ? (
+                        <button
+                          type="button"
+                          onClick={() => handleCancelJob(job.id)}
+                          disabled={activeJobActionId !== null}
+                        >
+                          Cancel
+                        </button>
+                      ) : null}
+                      {job.status === "failed" || job.status === "cancelled" ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRetryJob(job.id)}
+                          disabled={activeJobActionId !== null}
+                        >
+                          Retry
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

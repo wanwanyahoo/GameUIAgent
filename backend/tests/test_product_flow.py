@@ -871,6 +871,56 @@ def test_ai_worker_uses_configured_inference_provider_and_persists_run(tmp_path)
         configure_inference_provider("local-deterministic")
 
 
+def test_project_ai_job_list_cancel_and_retry(tmp_path):
+    configure_persistent_store(str(tmp_path / "job-management.sqlite3"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Job Management Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1280, "height": 720},
+        },
+    ).json()
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "text_to_image",
+            "prompt": "queued HUD generation",
+            "model": "game-ui-xl",
+            "execution_mode": "queued",
+        },
+    ).json()
+
+    list_response = client.get(f"/api/projects/{project['id']}/ai/jobs", headers=headers)
+    assert list_response.status_code == 200
+    assert list_response.json()["jobs"][0]["id"] == job["id"]
+
+    get_response = client.get(f"/api/projects/{project['id']}/ai/jobs/{job['id']}", headers=headers)
+    assert get_response.status_code == 200
+    assert get_response.json()["status"] == "queued"
+
+    cancel_response = client.post(f"/api/projects/{project['id']}/ai/jobs/{job['id']}/cancel", headers=headers)
+    assert cancel_response.status_code == 200
+    cancelled = cancel_response.json()
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["queue"]["status"] == "cancelled"
+
+    retry_response = client.post(f"/api/projects/{project['id']}/ai/jobs/{job['id']}/retry", headers=headers)
+    assert retry_response.status_code == 201
+    retried = retry_response.json()
+    assert retried["id"] != job["id"]
+    assert retried["prompt"] == "queued HUD generation"
+    assert retried["execution_mode"] == "queued"
+    assert retried["retry_of"] == job["id"]
+    assert retried["status"] == "queued"
+
+    jobs = client.get(f"/api/projects/{project['id']}/ai/jobs", headers=headers).json()["jobs"]
+    assert [item["id"] for item in jobs] == [retried["id"], job["id"]]
+
+
 def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkeypatch):
     db_path = tmp_path / "qwen-layered-slice.sqlite3"
     configure_persistent_store(str(db_path))
@@ -3734,4 +3784,3 @@ def test_production_readiness_and_metrics(tmp_path):
     assert "assets" in data
     assert "audits" in data
     assert "exports" in data
-
