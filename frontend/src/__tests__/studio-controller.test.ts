@@ -1,0 +1,94 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { createStudioController } from "../lib/studio-controller";
+
+describe("studio controller", () => {
+  it("loads studio state and publishes action status transitions", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const controller = createStudioController({
+      projectId: "prj_1",
+      token: "tok_1",
+      fetcher: async (url, init) => {
+        calls.push({ url, init });
+        if (url.endsWith("/corrections/correction_button_bounds/apply")) {
+          return jsonResponse({ status: "applied" });
+        }
+        if (url.endsWith("/export-wizard")) {
+          return jsonResponse({ export_preview: { target_engine: "cocos3" } });
+        }
+        return jsonResponse(studioStateDto(calls.length > 3 ? "cocos3" : "unity"));
+      }
+    });
+    const phases: string[] = [];
+    const actions: string[] = [];
+    controller.subscribe((state) => {
+      phases.push(state.phase);
+      if (state.activeAction) {
+        actions.push(state.activeAction);
+      }
+    });
+
+    assert.equal(controller.getState().phase, "idle");
+
+    await controller.load();
+    await controller.applyCorrection("correction_button_bounds");
+    await controller.previewExport("cocos3");
+
+    assert.deepEqual(phases, [
+      "loading",
+      "ready",
+      "ready",
+      "ready",
+      "ready",
+      "ready"
+    ]);
+    assert.deepEqual(actions, ["apply-correction", "export-package"]);
+    assert.deepEqual(calls.map((call) => call.url), [
+      "/api/projects/prj_1/studio",
+      "/api/projects/prj_1/studio/corrections/correction_button_bounds/apply",
+      "/api/projects/prj_1/studio",
+      "/api/projects/prj_1/studio/export-wizard",
+      "/api/projects/prj_1/studio"
+    ]);
+    assert.equal(controller.getState().studio?.exportWizard.targetEngine, "cocos3");
+  });
+});
+
+function studioStateDto(targetEngine: string) {
+  return {
+    project_id: "prj_1",
+    active_selection: {
+      selected_layer_id: "button_primary",
+      selected_asset_id: "asset_slice",
+      active_task_id: "timeline_slice"
+    },
+    timeline: [
+      { kind: "text_to_image", status: "succeeded", progress: 100 },
+      { kind: "ui_segmentation", status: "succeeded", progress: 100 },
+      { kind: `${targetEngine}_export`, status: "queued", progress: 0 }
+    ],
+    action_dock: [{ id: "apply-correction", title: "Apply Correction", shortcut: "A" }],
+    segmentation_corrections: [
+      {
+        id: "correction_button_bounds",
+        target_layer_id: "button_primary",
+        title: "Primary CTA bounds",
+        change: "Resize hit box to match nine-slice button art.",
+        confidence: 0.92,
+        status: "pending"
+      }
+    ],
+    export_wizard: {
+      target_engine: targetEngine,
+      steps: [{ id: "validate-ir", title: "Validate Asset IR", status: "active" }]
+    }
+  };
+}
+
+function jsonResponse(body: unknown): Response {
+  return {
+    ok: true,
+    json: async () => body
+  } as Response;
+}
