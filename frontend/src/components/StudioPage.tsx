@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth-context";
 import { getStudioStateApi, getProjectApi, type StudioState, type Project } from "../lib/projects-api";
 import { navigateTo } from "../lib/hash-router";
-import { runStudioAction } from "../lib/studio-actions";
+import { runGeneratedAssetAction, runStudioAction } from "../lib/studio-actions";
 import {
   fetchPluginExportDownload,
   fetchPluginProjectExports,
@@ -28,6 +28,15 @@ type TimelineTask = {
   type: string;
 };
 
+type GeneratedStudioAsset = {
+  id: string;
+  sourceJobId: string;
+  sourceKind: string;
+  prompt: string;
+  rank?: number;
+  score?: number;
+};
+
 export function StudioPage({ projectId }: StudioPageProps) {
   const { token, user } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
@@ -42,6 +51,7 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [exportsList, setExportsList] = useState<PluginProjectExport[]>([]);
   const [downloadPreview, setDownloadPreview] = useState<PluginExportDownload | null>(null);
   const [activeExportId, setActiveExportId] = useState<string | null>(null);
+  const [activeGeneratedActionId, setActiveGeneratedActionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!projectId) {
@@ -124,6 +134,7 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const activeTasks = tasks.filter((task) => task.status === "queued" || task.status === "processing" || task.status === "running");
   const completedTasks = tasks.filter((task) => task.status === "completed" || task.status === "succeeded" || task.status === "failed" || task.status === "ready");
   const liveStatus = isPolling ? "live" : "idle";
+  const generatedAssets = collectGeneratedAssets(aiJobs);
 
   const handleStudioAction = async (actionId: string) => {
     if (!token || !project || !studio || activeActionId) return;
@@ -188,6 +199,29 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setError(err.message || "Failed to download export package");
     } finally {
       setActiveExportId(null);
+    }
+  };
+
+  const handleGeneratedAssetAction = async (actionId: string, assetId: string) => {
+    if (!token || !project || !studio || activeGeneratedActionId) return;
+    try {
+      setActiveGeneratedActionId(`${actionId}:${assetId}`);
+      setError(null);
+      setActionMessage(null);
+      const result = await runGeneratedAssetAction({ actionId, assetId, token, project, studio });
+      setActionMessage(result.message);
+      const [latestStudio, latestJobs, latestExports] = await Promise.all([
+        getStudioStateApi(token, project.id),
+        listStudioAiJobs({ projectId: project.id, token }),
+        fetchPluginProjectExports({ projectId: project.id, engine: "all", token }),
+      ]);
+      setStudio(latestStudio);
+      setAiJobs(latestJobs);
+      setExportsList(latestExports);
+    } catch (err: any) {
+      setError(err.message || "Failed to run generated asset action");
+    } finally {
+      setActiveGeneratedActionId(null);
     }
   };
 
@@ -337,6 +371,42 @@ export function StudioPage({ projectId }: StudioPageProps) {
           </div>
 
           <div className="sidebar-section">
+            <h3>Generated Assets</h3>
+            <div className="studio-generated-assets-list">
+              {generatedAssets.length === 0 ? (
+                <p className="studio-empty-state">No generated assets yet</p>
+              ) : (
+                generatedAssets.slice(0, 5).map((asset) => (
+                  <div key={asset.id} className="studio-generated-asset-card">
+                    <div className="studio-job-header">
+                      <span className="studio-job-kind">{asset.sourceKind}</span>
+                      {asset.rank !== undefined && <span className="studio-job-status">rank {asset.rank}</span>}
+                    </div>
+                    <p className="studio-job-prompt">{asset.prompt}</p>
+                    <p className="studio-asset-id">{asset.id}</p>
+                    <div className="studio-job-actions">
+                      <button
+                        type="button"
+                        onClick={() => handleGeneratedAssetAction("slice-generated-asset", asset.id)}
+                        disabled={activeGeneratedActionId !== null}
+                      >
+                        {activeGeneratedActionId === `slice-generated-asset:${asset.id}` ? "Slicing..." : "Slice"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleGeneratedAssetAction("export-generated-asset", asset.id)}
+                        disabled={activeGeneratedActionId !== null}
+                      >
+                        {activeGeneratedActionId === `export-generated-asset:${asset.id}` ? "Exporting..." : "Export"}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="sidebar-section">
             <h3>AI Jobs</h3>
             <div className="studio-jobs-list">
               {aiJobs.length === 0 ? (
@@ -401,4 +471,35 @@ export function StudioPage({ projectId }: StudioPageProps) {
       </div>
     </div>
   );
+}
+
+function collectGeneratedAssets(aiJobs: StudioAiJob[]): GeneratedStudioAsset[] {
+  const assets = new Map<string, GeneratedStudioAsset>();
+
+  aiJobs
+    .filter((job) => job.status === "succeeded")
+    .forEach((job) => {
+      if (job.resultAsset?.id) {
+        assets.set(job.resultAsset.id, {
+          id: job.resultAsset.id,
+          sourceJobId: job.id,
+          sourceKind: job.kind,
+          prompt: job.prompt,
+        });
+      }
+
+      job.candidates.forEach((candidate) => {
+        if (!candidate.assetId || assets.has(candidate.assetId)) return;
+        assets.set(candidate.assetId, {
+          id: candidate.assetId,
+          sourceJobId: job.id,
+          sourceKind: job.kind,
+          prompt: job.prompt,
+          rank: candidate.rank,
+          score: candidate.score,
+        });
+      });
+    });
+
+  return Array.from(assets.values());
 }

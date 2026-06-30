@@ -18,7 +18,7 @@ import {
   retryStudioAiJob,
   updateStudioAsset
 } from "../lib/studio-api";
-import { runStudioAction } from "../lib/studio-actions";
+import { runGeneratedAssetAction, runStudioAction } from "../lib/studio-actions";
 
 describe("studio API client", () => {
   it("maps backend studio state into frontend camelCase models", async () => {
@@ -382,6 +382,69 @@ describe("studio API client", () => {
     assert.equal(job.status, "queued");
     assert.equal(cancelled.status, "cancelled");
     assert.equal(retried.retryOf, "job_1");
+  });
+
+  it("runs generated asset quick actions for slicing and export", async () => {
+    const calls: Array<{ action: string; assetId?: string; targetEngine?: string }> = [];
+    const project = {
+      id: "prj_1",
+      name: "Battle HUD",
+      target_engine: "unreal",
+      canvas: { width: 1920, height: 1080 },
+      status: "active",
+      owner_id: "usr_1",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const studio = {
+      project_id: "prj_1",
+      active_selection: {
+        selected_layer_id: "button_primary",
+        selected_asset_id: "ast_seed",
+        active_task_id: "timeline_slice",
+      },
+      action_dock: [],
+      timeline: [],
+      segmentation_corrections: [],
+      export_wizard: {
+        target_engine: "unity",
+        steps: [],
+      },
+    };
+    const clients = {
+      createSegmentation: async (options: Parameters<typeof createStudioSegmentation>[0]) => {
+        calls.push({ action: "slice", assetId: options.assetId });
+        return { id: "seg_1" };
+      },
+      previewExport: async (options: Parameters<typeof previewStudioExportWizard>[0]) => {
+        calls.push({ action: "export", targetEngine: options.targetEngine });
+        return { export: { id: "exp_1" } };
+      },
+    };
+
+    const slice = await runGeneratedAssetAction({
+      actionId: "slice-generated-asset",
+      assetId: "ast_generated",
+      token: "tok_1",
+      project,
+      studio,
+      clients,
+    });
+    const exported = await runGeneratedAssetAction({
+      actionId: "export-generated-asset",
+      assetId: "ast_generated",
+      token: "tok_1",
+      project,
+      studio,
+      clients,
+    });
+
+    assert.deepEqual(calls, [
+      { action: "slice", assetId: "ast_generated" },
+      { action: "export", targetEngine: "unity" },
+    ]);
+    assert.equal(slice.message, "Generated asset sent to layered slice");
+    assert.equal(exported.message, "Generated asset export package generated");
   });
 });
 

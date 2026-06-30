@@ -24,6 +24,17 @@ export type RunStudioActionResult = {
   result: unknown;
 };
 
+export type GeneratedAssetActionId = "slice-generated-asset" | "export-generated-asset";
+
+export type RunGeneratedAssetActionOptions = {
+  actionId: string;
+  assetId: string;
+  token: string;
+  project: Project;
+  studio: StudioState;
+  clients?: Partial<Pick<StudioActionClients, "createSegmentation" | "previewExport">>;
+};
+
 const defaultClients: StudioActionClients = {
   createAiJob: createStudioAiJob,
   createSegmentation: createStudioSegmentation,
@@ -87,4 +98,33 @@ export async function runStudioAction(options: RunStudioActionOptions): Promise<
   }
 
   throw new Error(`Unsupported Studio action: ${options.actionId}`);
+}
+
+export async function runGeneratedAssetAction(options: RunGeneratedAssetActionOptions): Promise<RunStudioActionResult> {
+  const clients = { ...defaultClients, ...options.clients };
+  const projectId = options.project.id;
+
+  if (!options.assetId) {
+    throw new Error("No generated asset is available for this action");
+  }
+
+  if (options.actionId === "slice-generated-asset") {
+    const result = await clients.createSegmentation({
+      projectId,
+      token: options.token,
+      assetId: options.assetId,
+    });
+    return { status: "ok", message: "Generated asset sent to layered slice", result };
+  }
+
+  if (options.actionId === "export-generated-asset") {
+    const result = await clients.previewExport({
+      projectId,
+      token: options.token,
+      targetEngine: options.studio.export_wizard.target_engine || options.project.target_engine,
+    });
+    return { status: "ok", message: "Generated asset export package generated", result };
+  }
+
+  throw new Error(`Unsupported generated asset action: ${options.actionId}`);
 }
