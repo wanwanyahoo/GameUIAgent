@@ -486,8 +486,10 @@ def plugin_project_exports(
         {
             "id": export["id"],
             "engine": export["package"]["manifest"]["engine"],
+            "engine_version": export["package"]["manifest"].get("engine_version", ""),
             "status": export["status"],
             "name": f"{project['name']} {export['package']['manifest']['engine']}",
+            "entry": export["package"]["manifest"]["entry"],
             "manifest_url": f"/api/plugin/exports/{export['id']}/manifest",
             "download_url": f"/api/plugin/exports/{export['id']}/download",
         }

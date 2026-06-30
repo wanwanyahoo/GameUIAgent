@@ -5,14 +5,17 @@ import {
   type StudioApiFetcher,
   type StudioApiState
 } from "./studio-api";
+import { fetchPluginProjectExports, type PluginProjectExport } from "./plugin-api";
 
 export type StudioControllerAction = "apply-correction" | "export-package";
+export type StudioControllerPluginExport = PluginProjectExport;
 
 export type StudioControllerState = {
   phase: "idle" | "loading" | "ready" | "error";
   activeAction?: StudioControllerAction;
   error?: string;
   studio?: StudioApiState;
+  pluginExports?: StudioControllerPluginExport[];
 };
 
 export type StudioController = {
@@ -40,7 +43,7 @@ export function createStudioController(options: {
 
   const loadStudio = async (phase: "loading" | "ready") => {
     if (phase === "loading") {
-      publish({ phase: "loading", studio: state.studio });
+      publish({ phase: "loading", studio: state.studio, pluginExports: state.pluginExports });
     }
     const studio = await fetchStudioState(options);
     return studio;
@@ -53,7 +56,8 @@ export function createStudioController(options: {
       publish({
         phase: "error",
         error: error instanceof Error ? error.message : "Studio action failed",
-        studio: state.studio
+        studio: state.studio,
+        pluginExports: state.pluginExports
       });
     }
   };
@@ -71,14 +75,19 @@ export function createStudioController(options: {
       publish({ ...state, phase: "ready", activeAction: "apply-correction" });
       await run(async () => {
         await applyStudioCorrection({ ...options, correctionId });
-        return { phase: "ready", studio: await loadStudio("ready") };
+        return { phase: "ready", studio: await loadStudio("ready"), pluginExports: state.pluginExports };
       });
     },
     previewExport: async (targetEngine) => {
       publish({ ...state, phase: "ready", activeAction: "export-package" });
       await run(async () => {
         await previewStudioExportWizard({ ...options, targetEngine });
-        return { phase: "ready", studio: await loadStudio("ready") };
+        const studio = await loadStudio("ready");
+        const pluginExports = await fetchPluginProjectExports({
+          ...options,
+          engine: targetEngine
+        });
+        return { phase: "ready", studio, pluginExports };
       });
     }
   };

@@ -662,6 +662,40 @@ def test_plugin_auth_lists_projects_and_project_exports():
     assert exports[0]["manifest_url"] == f"/api/plugin/exports/{unity_created['export']['id']}/manifest"
 
 
+def test_studio_unreal_wizard_export_is_queryable_by_unreal_plugin():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Unreal Wizard HUD",
+            "target_engine": "unreal",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+
+    wizard_response = client.post(
+        f"/api/projects/{project['id']}/studio/export-wizard",
+        headers=headers,
+        json={"target_engine": "unreal"},
+    )
+    assert wizard_response.status_code == 200
+    wizard = wizard_response.json()
+    assert wizard["export_preview"]["target_engine"] == "unreal"
+    assert wizard["export_preview"]["entry"].endswith("WBP_UnrealWizardHud.uasset")
+
+    exports_response = client.get(
+        f"/api/plugin/projects/{project['id']}/exports?engine=unreal",
+        headers=headers,
+    )
+    assert exports_response.status_code == 200
+    exports = exports_response.json()["exports"]
+    assert [export["id"] for export in exports] == [wizard["export"]["id"]]
+    assert exports[0]["engine_version"] == "5.3+"
+    assert exports[0]["entry"]["type"] == "umg_widget_blueprint"
+    assert exports[0]["entry"]["path"].endswith("WBP_UnrealWizardHud.uasset")
+
+
 def test_unity_restyle_preserves_layout_bindings():
     headers = auth_headers()
     project = client.post(
