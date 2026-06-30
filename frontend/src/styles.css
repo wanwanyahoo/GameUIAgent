@@ -434,6 +434,22 @@ a {
   font-size: 0.72rem;
 }
 
+.import-telemetry strong,
+.import-telemetry em {
+  width: fit-content;
+  padding: 0.45rem 0.65rem;
+  color: #001017;
+  background: #7cf8ff;
+  border-radius: 999px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  font-style: normal;
+}
+
+.import-telemetry em {
+  background: #d7ff66;
+}
+
 .action-dock {
   min-height: unset;
 }

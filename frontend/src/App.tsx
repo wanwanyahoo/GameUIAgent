@@ -173,6 +173,8 @@ export function App() {
           <div className="panel import-telemetry">
             <h3>Plugin Import Telemetry</h3>
             <small>Unreal 5.3+ import summary</small>
+            <strong>Plugin import succeeded</strong>
+            <em>Warnings: 1</em>
             {pluginImportTelemetry.map(([label, value]) => (
               <p key={label}>
                 <b>{label}</b>

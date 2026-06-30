@@ -2,8 +2,9 @@ export type StudioApiFetcher = (url: string, init?: RequestInit) => Promise<Resp
 
 export type StudioApiTimelineTask = {
   kind: string;
-  status: "queued" | "ready" | "running" | "succeeded";
+  status: "queued" | "ready" | "running" | "succeeded" | "failed";
   progress: number;
+  summary?: Record<string, number>;
 };
 
 export type StudioApiAction = {

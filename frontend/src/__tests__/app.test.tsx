@@ -115,6 +115,8 @@ describe("App", () => {
 
     assert.match(html, /Plugin Import Telemetry/);
     assert.match(html, /Unreal 5.3\+ import summary/);
+    assert.match(html, /Plugin import succeeded/);
+    assert.match(html, /Warnings: 1/);
     assert.match(html, /umg_widgets_created/);
     assert.match(html, /slate_slots_bound/);
   });

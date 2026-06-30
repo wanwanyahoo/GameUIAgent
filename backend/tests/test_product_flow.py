@@ -227,6 +227,55 @@ def test_studio_timeline_uses_selected_engine_export_task():
     assert wizard_response.json()["studio"]["timeline"][2]["kind"] == "cocos3_export"
 
 
+def test_studio_timeline_reflects_plugin_import_log_status():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Timeline Import HUD",
+            "target_engine": "unreal",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    wizard_response = client.post(
+        f"/api/projects/{project['id']}/studio/export-wizard",
+        headers=headers,
+        json={"target_engine": "unreal"},
+    )
+    export_id = wizard_response.json()["export"]["id"]
+
+    client.post(
+        "/api/plugin/import-logs",
+        headers=headers,
+        json={
+            "export_id": export_id,
+            "engine": "unreal",
+            "status": "succeeded",
+            "plugin_version": "0.2.0",
+            "engine_version": "5.3+",
+            "duration_ms": 5200,
+            "summary": {
+                "textures_created": 4,
+                "umg_widgets_created": 1,
+                "warnings": 1,
+                "errors": 0,
+            },
+            "logs": [{"level": "warning", "message": "Texture compression preset was normalized"}],
+        },
+    )
+
+    state_response = client.get(f"/api/projects/{project['id']}/studio", headers=headers)
+
+    assert state_response.status_code == 200
+    plugin_import = state_response.json()["timeline"][3]
+    assert plugin_import["kind"] == "plugin_import"
+    assert plugin_import["status"] == "succeeded"
+    assert plugin_import["progress"] == 100
+    assert plugin_import["summary"]["warnings"] == 1
+    assert plugin_import["summary"]["errors"] == 0
+
+
 def test_segmentation_rejects_assets_from_other_projects():
     owner_headers = auth_headers()
     owner_project = client.post(
@@ -632,6 +681,29 @@ def test_plugin_import_log_rejects_engine_mismatch():
 
     assert log_response.status_code == 422
     assert log_response.json()["detail"] == "Import log engine does not match export engine"
+
+
+def test_plugin_import_log_rejects_unknown_status():
+    headers = auth_headers()
+    export_id = create_engine_export(headers, "unreal", "Unknown Status HUD")["export"]["id"]
+
+    log_response = client.post(
+        "/api/plugin/import-logs",
+        headers=headers,
+        json={
+            "export_id": export_id,
+            "engine": "unreal",
+            "status": "partial",
+            "plugin_version": "0.2.0",
+            "engine_version": "5.3+",
+            "duration_ms": 1800,
+            "summary": {"warnings": 1, "errors": 0},
+            "logs": [{"level": "warning", "message": "Unknown status should be rejected"}],
+        },
+    )
+
+    assert log_response.status_code == 422
+    assert log_response.json()["detail"] == "Unsupported import log status"
 
 
 def test_multi_engine_exports_have_native_manifest_import_plans():

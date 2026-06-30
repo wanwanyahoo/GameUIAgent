@@ -529,6 +529,11 @@ def plugin_import_log(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Import log engine does not match export engine",
         )
+    if payload.status not in {"succeeded", "failed"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unsupported import log status",
+        )
     log = {
         "id": make_id("ilog"),
         "export_id": export["id"],
@@ -749,7 +754,22 @@ def build_studio_timeline(project: dict[str, Any], target_engine: str | None = N
     engine = target_engine or latest_project_export_engine(project) or project["target_engine"]
     jobs = [job for job in store["jobs"].values() if job["project_id"] == project["id"]]
     ir_ready = latest_project_ir(project) is not None
-    export_ready = any(export["project_id"] == project["id"] for export in store["exports"].values())
+    export = latest_project_export(project, engine)
+    export_ready = export is not None
+    plugin_import = {
+        "kind": "plugin_import",
+        "status": "ready" if export_ready else "queued",
+        "progress": 0,
+    }
+    if export:
+        import_log = latest_export_import_log(export)
+        if import_log:
+            plugin_import = {
+                "kind": "plugin_import",
+                "status": import_log["status"],
+                "progress": 100,
+                "summary": import_log["summary"],
+            }
     return [
         {
             "kind": "text_to_image",
@@ -766,17 +786,31 @@ def build_studio_timeline(project: dict[str, Any], target_engine: str | None = N
             "status": "succeeded" if export_ready else "queued",
             "progress": 100 if export_ready else 0,
         },
-        {
-            "kind": "plugin_import",
-            "status": "ready" if export_ready else "queued",
-            "progress": 0,
-        },
+        plugin_import,
     ]
 
 
 def latest_project_export_engine(project: dict[str, Any]) -> str | None:
     exports = [export for export in store["exports"].values() if export["project_id"] == project["id"]]
     return exports[-1]["target_engine"] if exports else None
+
+
+def latest_project_export(project: dict[str, Any], target_engine: str) -> dict[str, Any] | None:
+    exports = [
+        export
+        for export in store["exports"].values()
+        if export["project_id"] == project["id"] and export["target_engine"] == target_engine
+    ]
+    return exports[-1] if exports else None
+
+
+def latest_export_import_log(export: dict[str, Any]) -> dict[str, Any] | None:
+    logs = [
+        log
+        for log in store["import_logs"].values()
+        if log["export_id"] == export["id"]
+    ]
+    return logs[-1] if logs else None
 
 
 def apply_correction_to_latest_ir(project: dict[str, Any], correction: dict[str, Any]) -> dict[str, Any]:

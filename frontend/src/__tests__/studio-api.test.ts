@@ -23,7 +23,12 @@ describe("studio API client", () => {
           { kind: "text_to_image", status: "succeeded", progress: 100 },
           { kind: "ui_segmentation", status: "succeeded", progress: 100 },
           { kind: "godot_export", status: "queued", progress: 0 },
-          { kind: "plugin_import", status: "queued", progress: 0 }
+          {
+            kind: "plugin_import",
+            status: "failed",
+            progress: 100,
+            summary: { warnings: 1, errors: 2 }
+          }
         ],
         action_dock: [{ id: "apply-correction", title: "Apply Correction", shortcut: "A" }],
         segmentation_corrections: [
@@ -61,6 +66,8 @@ describe("studio API client", () => {
     ]);
     assert.equal(studio.segmentationCorrections[0]?.targetLayerId, "button_primary");
     assert.equal(studio.exportWizard.targetEngine, "godot");
+    assert.equal(studio.timeline[3]?.status, "failed");
+    assert.equal(studio.timeline[3]?.summary?.errors, 2);
   });
 
   it("posts correction and export wizard actions to backend Studio routes", async () => {
