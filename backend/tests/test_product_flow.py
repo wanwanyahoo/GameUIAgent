@@ -3429,3 +3429,82 @@ def test_billing_credits_recharge_and_deduction_flow(tmp_path):
 
     billing_after = client.get("/api/user/billing", headers=headers).json()
     assert billing_after["credits"]["total_available"] == 220 - job.get("cost_credits", 0)
+
+
+def test_api_keys_create_list_and_revoke(tmp_path):
+    configure_persistent_store(str(tmp_path / "apikeys.sqlite3"))
+    configure_object_storage(str(tmp_path / "apikeys-objects"))
+
+    email = f"apikeys-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "API Keys User"})
+    login_response = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+    list_empty = client.get("/api/user/api-keys", headers=headers).json()
+    assert list_empty["api_keys"] == []
+
+    create_resp = client.post("/api/user/api-keys", headers=headers, json={"name": "Production Key"})
+    assert create_resp.status_code == 201
+    created = create_resp.json()
+    assert created["name"] == "Production Key"
+    assert created["api_key"].startswith("guk_")
+    assert "id" in created
+    assert "created_at" in created
+
+    list_after = client.get("/api/user/api-keys", headers=headers).json()
+    assert len(list_after["api_keys"]) == 1
+    key = list_after["api_keys"][0]
+    assert key["name"] == "Production Key"
+    assert key["prefix"].startswith("guk_")
+    assert "..." in key["prefix"]
+    assert "created_at" in key
+
+    create_resp2 = client.post("/api/user/api-keys", headers=headers, json={"name": "Dev Key"})
+    assert create_resp2.status_code == 201
+
+    list_two = client.get("/api/user/api-keys", headers=headers).json()
+    assert len(list_two["api_keys"]) == 2
+
+    revoke_resp = client.delete(f"/api/user/api-keys/{key['id']}", headers=headers)
+    assert revoke_resp.status_code == 200
+    assert revoke_resp.json()["status"] == "revoked"
+
+    list_final = client.get("/api/user/api-keys", headers=headers).json()
+    assert len(list_final["api_keys"]) == 1
+    assert list_final["api_keys"][0]["name"] == "Dev Key"
+
+
+def test_api_keys_revoke_unknown_returns_404(tmp_path):
+    configure_persistent_store(str(tmp_path / "apikeys404.sqlite3"))
+    configure_object_storage(str(tmp_path / "apikeys404-objects"))
+
+    email = f"apikeys404-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "User"})
+    login_response = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+    resp = client.delete("/api/user/api-keys/key_nonexistent", headers=headers)
+    assert resp.status_code == 404
+
+
+def test_api_keys_isolated_per_user(tmp_path):
+    configure_persistent_store(str(tmp_path / "apikeysiso.sqlite3"))
+    configure_object_storage(str(tmp_path / "apikeysiso-objects"))
+
+    email1 = f"user1-{uuid4().hex}@gameuiagent.dev"
+    email2 = f"user2-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email1, "password": "secret-pass", "name": "User 1"})
+    client.post("/api/auth/register", json={"email": email2, "password": "secret-pass", "name": "User 2"})
+    h1 = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'email': email1, 'password': 'secret-pass'}).json()['access_token']}"}
+    h2 = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'email': email2, 'password': 'secret-pass'}).json()['access_token']}"}
+
+    client.post("/api/user/api-keys", headers=h1, json={"name": "User1 Key"})
+    client.post("/api/user/api-keys", headers=h2, json={"name": "User2 Key"})
+
+    list1 = client.get("/api/user/api-keys", headers=h1).json()
+    list2 = client.get("/api/user/api-keys", headers=h2).json()
+    assert len(list1["api_keys"]) == 1
+    assert list1["api_keys"][0]["name"] == "User1 Key"
+    assert len(list2["api_keys"]) == 1
+    assert list2["api_keys"][0]["name"] == "User2 Key"
+

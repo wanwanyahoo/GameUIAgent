@@ -1439,9 +1439,34 @@ def plugin_export_import_logs(export_id: str, user: dict[str, Any] = Depends(cur
 @app.post("/api/user/api-keys", status_code=status.HTTP_201_CREATED)
 def create_api_key(payload: ApiKeyRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, str]:
     raw_key = f"guk_{token_hex(24)}"
-    api_key = {"id": make_id("key"), "name": payload.name, "user": user}
+    api_key = {"id": make_id("key"), "name": payload.name, "user": user, "created_at": datetime.now(timezone.utc).isoformat()}
     store["api_keys"][raw_key] = api_key
-    return {"id": api_key["id"], "name": payload.name, "api_key": raw_key}
+    store.flush()
+    return {"id": api_key["id"], "name": payload.name, "api_key": raw_key, "created_at": api_key["created_at"]}
+
+
+@app.get("/api/user/api-keys")
+def list_api_keys(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    keys = []
+    for raw_key, key_data in store["api_keys"].items():
+        if key_data.get("user", {}).get("id") == user["id"]:
+            keys.append({
+                "id": key_data["id"],
+                "name": key_data["name"],
+                "created_at": key_data.get("created_at"),
+                "prefix": raw_key[:8] + "..." + raw_key[-4:],
+            })
+    return {"api_keys": keys}
+
+
+@app.delete("/api/user/api-keys/{key_id}")
+def revoke_api_key(key_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    for raw_key, key_data in list(store["api_keys"].items()):
+        if key_data.get("id") == key_id and key_data.get("user", {}).get("id") == user["id"]:
+            del store["api_keys"][raw_key]
+            store.flush()
+            return {"status": "revoked", "id": key_id}
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
 
 @app.get("/api/user/billing")
