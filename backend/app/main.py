@@ -199,6 +199,9 @@ worker_token: str | None = getenv("GAMEUIAGENT_WORKER_TOKEN")
 inference_provider_name = getenv("GAMEUIAGENT_INFERENCE_PROVIDER", "local-deterministic")
 MAX_PNG_ALPHA_SEGMENTATION_PIXELS = 2048 * 2048
 MAX_FIGMA_IMAGE_FILL_BYTES = 25 * 1024 * 1024
+MAX_GENERATED_IMAGE_BYTES = 25 * 1024 * 1024
+QWEN_INFERENCE_TIMEOUT = int(getenv("QWEN_INFERENCE_TIMEOUT", "120"))
+QWEN_DOWNLOAD_TIMEOUT = int(getenv("QWEN_DOWNLOAD_TIMEOUT", "60"))
 
 
 def configure_persistent_store(db_path: str) -> None:
@@ -2054,6 +2057,28 @@ def call_qwen_inference(request: dict[str, Any]) -> dict[str, Any]:
     api_key = getenv("QWEN_API_KEY")
     if not api_key:
         raise RuntimeError("Inference provider is not configured")
+    payload = qwen_request_inference(api_key, request)
+    remote_url = (
+        (payload.get("data") or [{}])[0].get("url")
+        or (payload.get("output", {}).get("results") or [{}])[0].get("url")
+    )
+    if not remote_url:
+        raise RuntimeError("Inference provider returned no asset URL")
+    local_asset_url = download_generated_image(
+        request["project_id"],
+        request["job_id"],
+        remote_url,
+        request.get("size", "1024x1024"),
+    )
+    return {
+        "asset_url": local_asset_url,
+        "remote_asset_url": remote_url,
+        "provider_job_id": payload.get("id") or payload.get("request_id"),
+        "layered_slices": extract_qwen_layered_slices(payload),
+    }
+
+
+def qwen_request_inference(api_key: str, request: dict[str, Any]) -> dict[str, Any]:
     try:
         response = httpx.post(
             qwen_inference_endpoint(),
@@ -2062,27 +2087,60 @@ def call_qwen_inference(request: dict[str, Any]) -> dict[str, Any]:
                 "model": request["model"],
                 "prompt": request["prompt"],
                 "n": request["count"],
-                "size": "1024x1024",
+                "size": request.get("size") or "1024x1024",
                 "response_format": "url_with_layered_slices",
-                **({"reference_asset": request["reference_asset"]} if request.get("reference_asset") else {}),
+                **({"reference_image": request["reference_asset"]["url"]} if request.get("reference_asset") else {}),
+                **({"seed": request["seed"]} if request.get("seed") is not None else {}),
             },
-            timeout=60,
+            timeout=QWEN_INFERENCE_TIMEOUT,
         )
         response.raise_for_status()
-        payload = response.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        raise RuntimeError("Inference provider failed") from exc
-    asset_url = (
-        (payload.get("data") or [{}])[0].get("url")
-        or (payload.get("output", {}).get("results") or [{}])[0].get("url")
-    )
-    if not asset_url:
-        raise RuntimeError("Inference provider returned no asset URL")
-    return {
-        "asset_url": asset_url,
-        "provider_job_id": payload.get("id") or payload.get("request_id"),
-        "layered_slices": extract_qwen_layered_slices(payload),
-    }
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = None
+        try:
+            detail = exc.response.json()
+        except Exception:
+            detail = exc.response.text[:500] if exc.response.text else None
+        raise RuntimeError(f"Inference provider HTTP {exc.response.status_code}: {detail}") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Inference provider network error: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError("Inference provider returned invalid JSON") from exc
+
+
+def download_generated_image(
+    project_id: str,
+    job_id: str,
+    remote_url: str,
+    size_label: str,
+) -> str:
+    try:
+        content, content_type = stream_download_image(remote_url, MAX_GENERATED_IMAGE_BYTES)
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Failed to download generated image: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError(f"Generated image rejected: {exc}") from exc
+    filename = f"{job_id}-{size_label}.png"
+    stored = object_storage.put(project_id, filename, content, content_type)
+    return stored["url"]
+
+
+def stream_download_image(url: str, max_bytes: int) -> tuple[bytes, str]:
+    chunks: list[bytes] = []
+    total_bytes = 0
+    with httpx.stream("GET", url, timeout=QWEN_DOWNLOAD_TIMEOUT, follow_redirects=True) as response:
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "image/png")
+        content_length = response.headers.get("content-length")
+        if content_length and int(content_length) > max_bytes:
+            raise ValueError(f"image exceeds {max_bytes} bytes")
+        for chunk in response.iter_bytes():
+            total_bytes += len(chunk)
+            if total_bytes > max_bytes:
+                raise ValueError(f"image exceeds {max_bytes} bytes")
+            chunks.append(chunk)
+    return b"".join(chunks), content_type
 
 
 def extract_qwen_layered_slices(payload: dict[str, Any]) -> list[dict[str, Any]]:

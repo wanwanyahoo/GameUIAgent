@@ -874,6 +874,7 @@ def test_ai_worker_uses_configured_inference_provider_and_persists_run(tmp_path)
 def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkeypatch):
     db_path = tmp_path / "qwen-layered-slice.sqlite3"
     configure_persistent_store(str(db_path))
+    configure_object_storage(str(tmp_path / "objects"))
     configure_inference_provider("qwen")
     monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
     captured_payload: dict[str, object] = {}
@@ -912,7 +913,11 @@ def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkey
         captured_payload.update(kwargs["json"])
         return FakeQwenResponse()
 
+    def fake_download_generated_image(project_id, job_id, remote_url, size_label):
+        return f"/api/objects/{project_id}/{job_id}-{size_label}.png"
+
     monkeypatch.setattr("app.main.httpx.post", fake_qwen_post)
+    monkeypatch.setattr("app.main.download_generated_image", fake_download_generated_image)
     try:
         headers = auth_headers()
         project = client.post(
@@ -953,10 +958,7 @@ def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkey
         assert worker_response.status_code == 200
         completed = worker_response.json()["job"]
         assert captured_payload["model"] == "qwen-layered-slice"
-        assert captured_payload["reference_asset"] == {
-            "id": reference_asset["id"],
-            "url": "s3://gameuiagent/reference-hud.png",
-        }
+        assert captured_payload["reference_image"] == "s3://gameuiagent/reference-hud.png"
         assert completed["status"] == "succeeded"
         assert completed["result_asset"]["metadata"]["layered_slice_provider"] == "qwen"
         assert completed["result_asset"]["metadata"]["layered_slices"][0]["id"] == "qwen_panel"
@@ -1012,8 +1014,99 @@ def test_qwen_layered_slice_parser_ignores_malformed_provider_shapes():
     assert extract_qwen_layered_slices({"output": {"results": {"layered_slices": []}}}) == []
 
 
+def test_qwen_http_error_propagates_status_detail(tmp_path, monkeypatch):
+    configure_persistent_store(str(tmp_path / "qwen-http-error.sqlite3"))
+    configure_object_storage(str(tmp_path / "objects-http-error"))
+    configure_inference_provider("qwen")
+    monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
+
+    class FakeErrorResponse:
+        status_code = 400
+        text = '{"code": "InvalidParameter", "message": "model not found"}'
+
+        def json(self):
+            return {"code": "InvalidParameter", "message": "model not found"}
+
+        def raise_for_status(self):
+            import httpx
+            raise httpx.HTTPStatusError(
+                "Bad Request",
+                request=None,
+                response=self,
+            )
+
+    def fake_qwen_post(*_args, **kwargs):
+        return FakeErrorResponse()
+
+    monkeypatch.setattr("app.main.httpx.post", fake_qwen_post)
+    try:
+        headers = auth_headers()
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={
+                "name": "Qwen HTTP Error",
+                "target_engine": "unity",
+                "canvas": {"width": 512, "height": 512},
+            },
+        ).json()
+
+        worker_response = client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={
+                "kind": "text_to_image",
+                "prompt": "test",
+                "execution_mode": "queued",
+            },
+        )
+        assert worker_response.status_code == 201
+
+        run_response = client.post("/api/system/ai-worker/run-next")
+        assert run_response.status_code == 200
+        job = run_response.json()["job"]
+        assert job["status"] == "failed"
+        assert "400" in job["error"] or "InvalidParameter" in job["error"]
+    finally:
+        configure_inference_provider("local-deterministic")
+
+
+def test_stream_download_image_rejects_oversize(tmp_path, monkeypatch):
+    from app.main import stream_download_image
+
+    fake_png = rgba_png_with_opaque_rects(100, 100, [{"x": 0, "y": 0, "width": 100, "height": 100}])
+    small_limit = len(fake_png) - 1
+
+    class FakeStreamResponse:
+        def __init__(self):
+            self.headers = {"content-type": "image/png", "content-length": str(len(fake_png))}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_bytes(self):
+            yield fake_png
+
+    def fake_stream(*_args, **kwargs):
+        return FakeStreamResponse()
+
+    monkeypatch.setattr("app.main.httpx.stream", fake_stream)
+    try:
+        stream_download_image("https://example.com/big.png", small_limit)
+        assert False, "expected ValueError for oversized image"
+    except ValueError as exc:
+        assert "exceeds" in str(exc)
+
+
 def test_inline_qwen_text_to_image_preserves_layered_slices(tmp_path, monkeypatch):
     configure_persistent_store(str(tmp_path / "inline-qwen-layered.sqlite3"))
+    configure_object_storage(str(tmp_path / "objects-inline"))
     configure_inference_provider("qwen")
     monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
     captured_payload: dict[str, object] = {}
@@ -1045,7 +1138,11 @@ def test_inline_qwen_text_to_image_preserves_layered_slices(tmp_path, monkeypatc
         captured_payload.update(kwargs["json"])
         return FakeQwenResponse()
 
+    def fake_download_generated_image(project_id, job_id, remote_url, size_label):
+        return f"/api/objects/{project_id}/{job_id}-{size_label}.png"
+
     monkeypatch.setattr("app.main.httpx.post", fake_qwen_post)
+    monkeypatch.setattr("app.main.download_generated_image", fake_download_generated_image)
     try:
         headers = auth_headers()
         project = client.post(
@@ -1074,7 +1171,7 @@ def test_inline_qwen_text_to_image_preserves_layered_slices(tmp_path, monkeypatc
         assert captured_payload["model"] == "qwen-layered-slice"
         assert job["status"] == "succeeded"
         assert job["inference"]["provider"] == "qwen"
-        assert job["result_asset"]["url"] == "https://qwen.example/inline-layered-ui.png"
+        assert "/api/objects/" in job["result_asset"]["url"]
         assert job["result_asset"]["metadata"]["layered_slices"][0]["id"] == "inline_inventory_panel"
     finally:
         configure_inference_provider("local-deterministic")
