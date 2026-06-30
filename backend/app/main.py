@@ -311,6 +311,41 @@ def send_smtp_email(message: EmailMessage) -> None:
         smtp.send_message(message)
 
 
+def append_audit_event(
+    project_id: str,
+    action: str,
+    actor_id: str | None,
+    entity_type: str,
+    entity_id: str,
+    *,
+    status_value: str = "succeeded",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    sequence = len(store["audit_events"]) + 1
+    event = {
+        "id": f"aud_{sequence:012d}",
+        "sequence": sequence,
+        "project_id": project_id,
+        "actor_id": actor_id or "system",
+        "action": action,
+        "status": status_value,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "metadata": metadata or {},
+    }
+    store["audit_events"][event["id"]] = event
+    return event
+
+
+def project_audit_events(project: dict[str, Any]) -> list[dict[str, Any]]:
+    events = [
+        event
+        for event in store["audit_events"].values()
+        if event["project_id"] == project["id"]
+    ]
+    return sorted(events, key=lambda event: event["sequence"])
+
+
 def current_user(authorization: str = Header(default="")) -> dict[str, Any]:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or token not in store["tokens"]:
@@ -372,6 +407,7 @@ def production_readiness() -> dict[str, Any]:
             "worker_auth" if worker_token else "missing_worker_auth",
             "inference_provider" if inference_provider_configured() else "missing_inference_provider",
             "smtp_email" if email_configured else "missing_smtp_email",
+            "audit_events",
             "salted_password_hashes",
             "project_ownership_guards",
             "engine_manifest_contracts",
@@ -756,6 +792,19 @@ def create_ai_job(
         "status": "queued" if payload.execution_mode == "queued" else "running",
         "progress": 0 if payload.execution_mode == "queued" else 50,
     }
+    append_audit_event(
+        project["id"],
+        "ai_job_created",
+        user["id"],
+        "ai_job",
+        job["id"],
+        status_value=job["status"],
+        metadata={
+            "kind": job["kind"],
+            "execution_mode": job["execution_mode"],
+            "model": payload.model or "game-ui-default",
+        },
+    )
     if payload.execution_mode == "queued":
         queue_item = {
             "id": make_id("aiq"),
@@ -778,6 +827,16 @@ def create_ai_job(
     else:
         complete_ai_job(project, job)
     store["jobs"][job["id"]] = job
+    if job["status"] in {"succeeded", "failed"}:
+        append_audit_event(
+            project["id"],
+            f"ai_job_{job['status']}",
+            user["id"],
+            "ai_job",
+            job["id"],
+            status_value=job["status"],
+            metadata={"result_asset_id": job.get("result_asset", {}).get("id")},
+        )
     return job
 
 
@@ -810,6 +869,16 @@ def run_next_ai_worker_job(_worker_authorized: bool = Depends(require_worker_tok
         job["progress"] = 0
         job["error"] = str(exc)
     job["queue"] = queue_item
+    if job["status"] in {"succeeded", "failed"}:
+        append_audit_event(
+            project["id"],
+            f"ai_job_{job['status']}",
+            None,
+            "ai_job",
+            job["id"],
+            status_value=job["status"],
+            metadata={"queue_id": queue_item["id"], "worker": queue_item["worker"]},
+        )
     store.flush()
     return {"status": "processed" if job["status"] == "succeeded" else "failed", "job": job, "queue": queue_item}
 
@@ -834,7 +903,7 @@ def create_segmentation(
         ir = build_ir_from_asset_segmentation(project, asset)
         slices = build_segmentation_slices(project, asset)
     store["irs"][ir["id"]] = ir
-    return {
+    segmentation = {
         "id": make_id("seg"),
         "project_id": project["id"],
         "source_asset_id": payload.asset_id,
@@ -843,6 +912,15 @@ def create_segmentation(
         "slices": slices,
         "ir": ir,
     }
+    append_audit_event(
+        project["id"],
+        "ui_segmentation_created",
+        user["id"],
+        "segmentation",
+        segmentation["id"],
+        metadata={"source_asset_id": payload.asset_id, "ir_id": ir["id"], "slice_count": len(slices)},
+    )
+    return segmentation
 
 
 @app.post("/api/projects/{project_id}/imports/professional", status_code=status.HTTP_201_CREATED)
@@ -942,7 +1020,21 @@ def create_export(
     export["package"]["manifest"]["package_id"] = export["id"]
     export["package"]["manifest"]["download_url"] = f"/api/plugin/exports/{export['id']}/download"
     store["exports"][export["id"]] = export
+    append_audit_event(
+        project["id"],
+        "engine_export_created",
+        user["id"],
+        "export",
+        export["id"],
+        metadata={"target_engine": payload.target_engine, "ir_id": payload.ir_id},
+    )
     return export
+
+
+@app.get("/api/projects/{project_id}/audit-events")
+def get_project_audit_events(project_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    return {"events": project_audit_events(project)}
 
 
 @app.get("/api/projects/{project_id}/studio")
@@ -1147,6 +1239,20 @@ def plugin_import_log(
     }
     store["import_logs"][log["id"]] = log
     export["last_import_log_id"] = log["id"]
+    append_audit_event(
+        export["project_id"],
+        "plugin_import_logged",
+        user["id"],
+        "plugin_import_log",
+        log["id"],
+        status_value=payload.status,
+        metadata={
+            "export_id": export["id"],
+            "engine": payload.engine,
+            "plugin_version": payload.plugin_version,
+            "duration_ms": payload.duration_ms,
+        },
+    )
     store.flush()
     return log
 

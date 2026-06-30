@@ -1822,6 +1822,76 @@ def test_project_ai_segmentation_and_unity_export_flow():
     assert plugin_response.json()["jobs"][0]["id"] == export["id"]
 
 
+def test_project_audit_events_trace_ai_export_and_plugin_import(tmp_path):
+    db_path = tmp_path / "audit-events.sqlite3"
+    configure_persistent_store(str(db_path))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Audited UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1280, "height": 720},
+        },
+    ).json()
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "audited production ui"},
+    ).json()
+    segmentation = client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": job["result_asset"]["id"]},
+    ).json()
+    export = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": segmentation["ir"]["id"], "target_engine": "unity"},
+    ).json()
+    client.post(
+        "/api/plugin/import-logs",
+        headers=headers,
+        json={
+            "export_id": export["id"],
+            "engine": "unity",
+            "status": "succeeded",
+            "plugin_version": "0.3.0",
+            "engine_version": "2022.3",
+            "duration_ms": 321,
+            "summary": {"prefabs": 1, "sprites": 3},
+            "logs": [{"level": "info", "message": "Imported audited UI"}],
+        },
+    )
+
+    audit_response = client.get(f"/api/projects/{project['id']}/audit-events", headers=headers)
+
+    assert audit_response.status_code == 200
+    audit_events = audit_response.json()["events"]
+    assert [event["action"] for event in audit_events] == [
+        "ai_job_created",
+        "ai_job_succeeded",
+        "ui_segmentation_created",
+        "engine_export_created",
+        "plugin_import_logged",
+    ]
+    assert audit_events[0]["actor_id"].startswith("usr_")
+    assert audit_events[1]["entity_id"] == job["id"]
+    assert audit_events[3]["metadata"]["target_engine"] == "unity"
+    assert audit_events[4]["metadata"]["plugin_version"] == "0.3.0"
+    assert "audit_events" in client.get("/api/system/production-readiness").json()["checks"]
+
+    reloaded_store = create_production_store()
+    reloaded_store.configure(str(db_path))
+    persisted_events = [
+        event
+        for event in reloaded_store["audit_events"].values()
+        if event["project_id"] == project["id"]
+    ]
+    assert [event["action"] for event in persisted_events] == [event["action"] for event in audit_events]
+
+
 def test_studio_state_applies_corrections_and_previews_export_wizard():
     headers = auth_headers()
     project = client.post(

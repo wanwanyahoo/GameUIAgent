@@ -11,6 +11,7 @@ STORE_SECTIONS = [
     "tokens",
     "projects",
     "assets",
+    "audit_events",
     "jobs",
     "ai_job_queue",
     "inference_runs",
