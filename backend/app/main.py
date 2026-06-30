@@ -124,6 +124,8 @@ class ProfessionalLayer(BaseModel):
     text: str | None = None
     component_key: str | None = None
     auto_layout: dict[str, Any] | None = None
+    opacity: float | None = None
+    visible: bool | None = None
 
 
 class ProfessionalImportRequest(BaseModel):
@@ -821,6 +823,7 @@ def create_professional_import_source(
             "parser": parsed_source["parser"],
             "preserved_layers": document["preserved_layers"],
             **({"binary_header": parsed_source["binary_header"]} if parsed_source.get("binary_header") else {}),
+            **({"layer_source": parsed_source["layer_source"]} if parsed_source.get("layer_source") else {}),
             **({"warnings": parsed_source["warnings"]} if parsed_source.get("warnings") else {}),
         },
         "ir": ir,
@@ -1839,9 +1842,19 @@ def parse_professional_import_source(
         if not source_asset:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Asset source required")
         header = parse_psd_binary_header(source_asset, payload.source_type)
+        parsed_layers = parse_psd_layer_records(source_asset, payload.source_type)
+        if parsed_layers:
+            return {
+                "parser": payload.parser,
+                "binary_header": header,
+                "layer_source": "psd-layer-records",
+                "layers": parsed_layers,
+                "warnings": [],
+            }
         return {
             "parser": payload.parser,
             "binary_header": header,
+            "layer_source": "composite-fallback",
             "layers": [
                 ProfessionalLayer(
                     id=f"{payload.source_type}_composite_canvas",
@@ -1855,7 +1868,7 @@ def parse_professional_import_source(
     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported source type")
 
 
-def parse_psd_binary_header(source_asset: dict[str, Any], source_type: str) -> dict[str, Any]:
+def stored_asset_path(source_asset: dict[str, Any]) -> Any:
     storage_key = source_asset.get("metadata", {}).get("storage_key")
     if not storage_key:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stored PSD/PSB binary asset required")
@@ -1865,6 +1878,11 @@ def parse_psd_binary_header(source_asset: dict[str, Any], source_type: str) -> d
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     if not path.exists():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Stored PSD/PSB binary asset missing")
+    return path
+
+
+def parse_psd_binary_header(source_asset: dict[str, Any], source_type: str) -> dict[str, Any]:
+    path = stored_asset_path(source_asset)
     with path.open("rb") as source_file:
         header = source_file.read(26)
     if len(header) < 26:
@@ -1890,6 +1908,88 @@ def parse_psd_binary_header(source_asset: dict[str, Any], source_type: str) -> d
         "depth": depth,
         "color_mode": psd_color_mode_name(color_mode_id),
     }
+
+
+def parse_psd_layer_records(source_asset: dict[str, Any], source_type: str) -> list[ProfessionalLayer]:
+    path = stored_asset_path(source_asset)
+    length_size = 8 if source_type == "psb" else 4
+    with path.open("rb") as source_file:
+        source_file.seek(26)
+        color_mode_length = read_uint(source_file.read(4))
+        source_file.seek(color_mode_length, 1)
+        image_resources_length = read_uint(source_file.read(4))
+        source_file.seek(image_resources_length, 1)
+        layer_mask_length = read_uint(source_file.read(length_size))
+        if layer_mask_length <= 0 or layer_mask_length > 5_000_000:
+            return []
+        layer_mask_section = source_file.read(layer_mask_length)
+    if len(layer_mask_section) < length_size + 2:
+        return []
+    layer_info_length = read_uint(layer_mask_section[0:length_size])
+    layer_info = layer_mask_section[length_size : length_size + layer_info_length]
+    if len(layer_info) < 2:
+        return []
+    layer_count = abs(int.from_bytes(layer_info[0:2], "big", signed=True))
+    cursor = 2
+    layers: list[ProfessionalLayer] = []
+    for index in range(layer_count):
+        if cursor + 18 > len(layer_info):
+            return []
+        top = read_uint(layer_info[cursor : cursor + 4])
+        left = read_uint(layer_info[cursor + 4 : cursor + 8])
+        bottom = read_uint(layer_info[cursor + 8 : cursor + 12])
+        right = read_uint(layer_info[cursor + 12 : cursor + 16])
+        cursor += 16
+        channel_count = read_uint(layer_info[cursor : cursor + 2])
+        cursor += 2
+        channel_records_length = channel_count * (2 + length_size)
+        if cursor + channel_records_length + 16 > len(layer_info):
+            return []
+        cursor += channel_records_length
+        cursor += 8
+        opacity_byte = layer_info[cursor]
+        cursor += 1
+        cursor += 1
+        flags = layer_info[cursor]
+        cursor += 1
+        cursor += 1
+        extra_length = read_uint(layer_info[cursor : cursor + 4])
+        cursor += 4
+        extra_data = layer_info[cursor : cursor + extra_length]
+        cursor += extra_length
+        name = parse_psd_layer_name(extra_data) or f"Layer {index + 1}"
+        layers.append(
+            ProfessionalLayer(
+                id=f"psd_layer_{index + 1}_{sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower() or 'layer'}",
+                name=name,
+                kind="image",
+                rect={"x": left, "y": top, "width": max(right - left, 0), "height": max(bottom - top, 0)},
+                opacity=round(opacity_byte / 255, 3),
+                visible=(flags & 2) == 0,
+            )
+        )
+    return layers
+
+
+def parse_psd_layer_name(extra_data: bytes) -> str | None:
+    if len(extra_data) < 9:
+        return None
+    cursor = 0
+    mask_length = read_uint(extra_data[cursor : cursor + 4])
+    cursor += 4 + mask_length
+    if cursor + 4 > len(extra_data):
+        return None
+    blending_ranges_length = read_uint(extra_data[cursor : cursor + 4])
+    cursor += 4 + blending_ranges_length
+    if cursor >= len(extra_data):
+        return None
+    name_length = extra_data[cursor]
+    cursor += 1
+    return extra_data[cursor : cursor + name_length].decode("utf-8", errors="ignore")
+
+
+def read_uint(data: bytes) -> int:
+    return int.from_bytes(data, "big") if data else 0
 
 
 def psd_color_mode_name(color_mode_id: int) -> str:
@@ -1947,6 +2047,10 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             node["component"] = {"key": layer["component_key"]}
         if layer.get("auto_layout"):
             node["layout"] = {"auto_layout": layer["auto_layout"]}
+        if layer.get("opacity") is not None:
+            node["opacity"] = layer["opacity"]
+        if layer.get("visible") is not None:
+            node["visible"] = layer["visible"]
         nodes.append(node)
     return {
         "id": make_id("ir"),

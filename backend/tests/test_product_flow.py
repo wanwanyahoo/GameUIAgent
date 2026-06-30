@@ -29,6 +29,47 @@ def minimal_psd_header(width: int, height: int, *, version: int = 1) -> bytes:
     )
 
 
+def psd_layer_record(name: str, rect: dict[str, int], *, opacity: int = 255, hidden: bool = False) -> bytes:
+    name_bytes = name.encode("utf-8")
+    pascal_name = bytes([len(name_bytes)]) + name_bytes
+    pascal_name += b"\x00" * ((4 - (len(pascal_name) % 4)) % 4)
+    extra_data = (0).to_bytes(4, "big") + (0).to_bytes(4, "big") + pascal_name
+    return (
+        rect["y"].to_bytes(4, "big")
+        + rect["x"].to_bytes(4, "big")
+        + (rect["y"] + rect["height"]).to_bytes(4, "big")
+        + (rect["x"] + rect["width"]).to_bytes(4, "big")
+        + (1).to_bytes(2, "big")
+        + (0).to_bytes(2, "big", signed=True)
+        + (2).to_bytes(4, "big")
+        + b"8BIM"
+        + b"norm"
+        + opacity.to_bytes(1, "big")
+        + b"\x00"
+        + ((2 if hidden else 0).to_bytes(1, "big"))
+        + b"\x00"
+        + len(extra_data).to_bytes(4, "big")
+        + extra_data
+    )
+
+
+def minimal_psd_with_layers(width: int, height: int) -> bytes:
+    layer_records = [
+        psd_layer_record("Main Panel", {"x": 24, "y": 32, "width": 240, "height": 120}, opacity=255),
+        psd_layer_record("Hidden CTA Button", {"x": 180, "y": 170, "width": 96, "height": 44}, opacity=128, hidden=True),
+    ]
+    channel_pixels = b"\x00\x00" * len(layer_records)
+    layer_info = len(layer_records).to_bytes(2, "big") + b"".join(layer_records) + channel_pixels
+    layer_mask_section = len(layer_info).to_bytes(4, "big") + layer_info
+    return (
+        minimal_psd_header(width, height)
+        + (0).to_bytes(4, "big")
+        + (0).to_bytes(4, "big")
+        + len(layer_mask_section).to_bytes(4, "big")
+        + layer_mask_section
+    )
+
+
 def minimal_png_header(width: int, height: int) -> bytes:
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -740,6 +781,56 @@ def test_professional_import_source_parses_uploaded_psd_binary_header(tmp_path):
     assert imported["design_document"]["layers"][0]["name"] == "PSD Composite Canvas"
     assert imported["design_document"]["layers"][0]["rect"] == {"x": 0, "y": 0, "width": 2048, "height": 1024}
     assert imported["ir"]["nodes"][1]["professional_source"]["parser"] == "psd-binary-header"
+
+
+def test_professional_import_source_preserves_psd_layer_records(tmp_path):
+    configure_persistent_store(str(tmp_path / "psd-layers.sqlite3"))
+    configure_object_storage(str(tmp_path / "psd-layer-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Real PSD Layers UI",
+            "target_engine": "unity",
+            "canvas": {"width": 512, "height": 256},
+        },
+    ).json()
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "layered-hud.psd",
+            "type": "psd",
+            "width": "512",
+            "height": "256",
+            "usage": "professional_import",
+        },
+        files={"file": ("layered-hud.psd", minimal_psd_with_layers(512, 256), "image/vnd.adobe.photoshop")},
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": uploaded["id"],
+            "parser": "psd-binary-header",
+        },
+    )
+
+    assert source_response.status_code == 201
+    imported = source_response.json()
+    assert imported["parse_summary"]["preserved_layers"] == 2
+    assert imported["parse_summary"]["layer_source"] == "psd-layer-records"
+    assert [layer["name"] for layer in imported["design_document"]["layers"]] == ["Main Panel", "Hidden CTA Button"]
+    assert imported["design_document"]["layers"][0]["rect"] == {"x": 24, "y": 32, "width": 240, "height": 120}
+    assert imported["design_document"]["layers"][0]["opacity"] == 1
+    assert imported["design_document"]["layers"][0]["visible"] is True
+    assert imported["design_document"]["layers"][1]["opacity"] == 0.502
+    assert imported["design_document"]["layers"][1]["visible"] is False
+    assert imported["ir"]["nodes"][2]["opacity"] == 0.502
+    assert imported["ir"]["nodes"][2]["visible"] is False
 
 
 def test_uploaded_png_segmentation_uses_detected_binary_dimensions(tmp_path):
