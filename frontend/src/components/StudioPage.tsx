@@ -4,6 +4,12 @@ import { getStudioStateApi, getProjectApi, type StudioState, type Project } from
 import { navigateTo } from "../lib/hash-router";
 import { runStudioAction } from "../lib/studio-actions";
 import {
+  fetchPluginExportDownload,
+  fetchPluginProjectExports,
+  type PluginProjectExport,
+  type PluginExportDownload,
+} from "../lib/plugin-api";
+import {
   cancelStudioAiJob,
   listStudioAiJobs,
   retryStudioAiJob,
@@ -33,6 +39,9 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [aiJobs, setAiJobs] = useState<StudioAiJob[]>([]);
   const [activeJobActionId, setActiveJobActionId] = useState<string | null>(null);
+  const [exportsList, setExportsList] = useState<PluginProjectExport[]>([]);
+  const [downloadPreview, setDownloadPreview] = useState<PluginExportDownload | null>(null);
+  const [activeExportId, setActiveExportId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!projectId) {
@@ -49,15 +58,17 @@ export function StudioPage({ projectId }: StudioPageProps) {
       try {
         if (showLoading) setLoading(true);
         setError(null);
-        const [proj, state, jobs] = await Promise.all([
+        const [proj, state, jobs, exports] = await Promise.all([
           getProjectApi(authToken, projectId),
           getStudioStateApi(authToken, projectId),
           listStudioAiJobs({ projectId, token: authToken }),
+          fetchPluginProjectExports({ projectId, engine: "all", token: authToken }),
         ]);
         if (cancelled) return;
         setProject(proj);
         setStudio(state);
         setAiJobs(jobs);
+        setExportsList(exports);
       } catch (err: any) {
         if (cancelled) return;
         setError(err.message || "Failed to load studio");
@@ -122,12 +133,14 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setActionMessage(null);
       const result = await runStudioAction({ actionId, token, project, studio });
       setActionMessage(result.message);
-      const [latestStudio, latestJobs] = await Promise.all([
+      const [latestStudio, latestJobs, latestExports] = await Promise.all([
         getStudioStateApi(token, project.id),
         listStudioAiJobs({ projectId: project.id, token }),
+        fetchPluginProjectExports({ projectId: project.id, engine: "all", token }),
       ]);
       setStudio(latestStudio);
       setAiJobs(latestJobs);
+      setExportsList(latestExports);
     } catch (err: any) {
       setError(err.message || "Failed to run Studio action");
     } finally {
@@ -160,6 +173,21 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setError(err.message || "Failed to retry AI job");
     } finally {
       setActiveJobActionId(null);
+    }
+  };
+
+  const handleDownloadExport = async (exportId: string) => {
+    if (!token || activeExportId) return;
+    try {
+      setActiveExportId(exportId);
+      setError(null);
+      const download = await fetchPluginExportDownload({ exportId, token });
+      setDownloadPreview(download);
+      setActionMessage(`Export ${download.exportId} ready: ${download.files.length} files, ${download.checksum}`);
+    } catch (err: any) {
+      setError(err.message || "Failed to download export package");
+    } finally {
+      setActiveExportId(null);
     }
   };
 
@@ -272,6 +300,40 @@ export function StudioPage({ projectId }: StudioPageProps) {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="sidebar-section">
+            <h3>Export Packages</h3>
+            <div className="studio-exports-list">
+              {exportsList.length === 0 ? (
+                <p className="studio-empty-state">No export packages yet</p>
+              ) : (
+                exportsList.slice(0, 4).map((item) => (
+                  <div key={item.id} className="studio-export-card">
+                    <div className="studio-job-header">
+                      <span className="studio-job-kind">{item.engine}</span>
+                      <span className="studio-job-status">{item.status}</span>
+                    </div>
+                    <p className="studio-job-prompt">{item.entry.path}</p>
+                    <div className="studio-job-actions">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadExport(item.id)}
+                        disabled={activeExportId !== null}
+                      >
+                        {activeExportId === item.id ? "Loading..." : "Download"}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            {downloadPreview && (
+              <div className="studio-download-preview">
+                <span>{downloadPreview.contentType}</span>
+                <b>{downloadPreview.manifest.entry.path}</b>
+              </div>
+            )}
           </div>
 
           <div className="sidebar-section">

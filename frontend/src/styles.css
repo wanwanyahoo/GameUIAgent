@@ -4815,6 +4815,11 @@ a {
   gap: 0.6rem;
 }
 
+.studio-exports-list {
+  display: grid;
+  gap: 0.6rem;
+}
+
 .studio-empty-state {
   margin: 0;
   padding: 0.75rem;
@@ -4829,6 +4834,13 @@ a {
   padding: 0.7rem;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 0.5rem;
+}
+
+.studio-export-card {
+  padding: 0.7rem;
+  background: rgba(215, 255, 102, 0.04);
+  border: 1px solid rgba(215, 255, 102, 0.18);
   border-radius: 0.5rem;
 }
 
@@ -4896,6 +4908,29 @@ a {
 .studio-job-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.studio-download-preview {
+  display: grid;
+  gap: 0.3rem;
+  margin-top: 0.7rem;
+  padding: 0.65rem;
+  color: rgba(232, 247, 255, 0.72);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(215, 255, 102, 0.2);
+  border-radius: 0.5rem;
+  font-size: 0.72rem;
+}
+
+.studio-download-preview span {
+  color: #d7ff66;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.studio-download-preview b {
+  color: rgba(232, 247, 255, 0.9);
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .studio-loading,

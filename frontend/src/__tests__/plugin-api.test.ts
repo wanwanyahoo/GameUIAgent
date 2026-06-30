@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { fetchPluginImportLogs, fetchPluginProjectExports } from "../lib/plugin-api";
+import { fetchPluginExportDownload, fetchPluginImportLogs, fetchPluginProjectExports } from "../lib/plugin-api";
 
 describe("plugin API client", () => {
   it("queries Unreal plugin exports with engine metadata", async () => {
@@ -88,6 +88,37 @@ describe("plugin API client", () => {
     assert.equal(importLogs.summary.umg_widgets_created, 1);
     assert.equal(importLogs.latestLog?.engineVersion, "5.3+");
     assert.equal(importLogs.latestLog?.logs[0]?.level, "warning");
+  });
+
+  it("downloads plugin export packages with manifest and files", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        content_type: "application/zip",
+        export_id: "exp_unreal",
+        manifest: {
+          engine: "unreal",
+          checksum: "sha256:abc",
+          entry: { type: "umg_widget_blueprint", path: "Widgets/WBP_HUD.uasset" }
+        },
+        files: [{ path: "manifest.json", content: "{}" }],
+        checksum: "sha256:abc"
+      });
+    };
+
+    const download = await fetchPluginExportDownload({
+      exportId: "exp_unreal",
+      token: "tok_1",
+      fetcher
+    });
+
+    assert.equal(calls[0]?.url, "/api/plugin/exports/exp_unreal/download");
+    assert.equal(calls[0]?.init?.headers?.["Authorization" as keyof HeadersInit], "Bearer tok_1");
+    assert.equal(download.exportId, "exp_unreal");
+    assert.equal(download.contentType, "application/zip");
+    assert.equal(download.manifest.engine, "unreal");
+    assert.equal(download.files[0]?.path, "manifest.json");
   });
 });
 

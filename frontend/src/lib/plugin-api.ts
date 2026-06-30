@@ -37,6 +37,22 @@ export type PluginImportLogSummary = {
   logs: PluginImportLog[];
 };
 
+export type PluginExportDownload = {
+  contentType: string;
+  exportId: string;
+  manifest: {
+    engine: string;
+    checksum: string;
+    entry: {
+      type: string;
+      path: string;
+    };
+    [key: string]: unknown;
+  };
+  files: Array<Record<string, unknown> & { path: string }>;
+  checksum: string;
+};
+
 type PluginProjectExportsDto = {
   exports: Array<{
     id: string;
@@ -76,15 +92,26 @@ type PluginImportLogSummaryDto = {
   logs: PluginImportLogDto[];
 };
 
+type PluginExportDownloadDto = {
+  content_type: string;
+  export_id: string;
+  manifest: PluginExportDownload["manifest"];
+  files: PluginExportDownload["files"];
+  checksum: string;
+};
+
 export async function fetchPluginProjectExports(options: {
   projectId: string;
-  engine: string;
+  engine?: string;
   token: string;
   fetcher?: StudioApiFetcher;
 }): Promise<PluginProjectExport[]> {
   const fetcher = options.fetcher ?? fetch;
+  const query = options.engine && options.engine !== "all"
+    ? `?engine=${encodeURIComponent(options.engine)}`
+    : "";
   const response = await fetcher(
-    `/api/plugin/projects/${options.projectId}/exports?engine=${encodeURIComponent(options.engine)}`,
+    `/api/plugin/projects/${options.projectId}/exports${query}`,
     {
       headers: {
         "Authorization": `Bearer ${options.token}`,
@@ -133,6 +160,34 @@ export async function fetchPluginImportLogs(options: {
     summary: dto.summary,
     latestLog: dto.latest_log ? mapPluginImportLog(dto.latest_log) : null,
     logs: dto.logs.map(mapPluginImportLog)
+  };
+}
+
+export async function fetchPluginExportDownload(options: {
+  exportId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<PluginExportDownload> {
+  const fetcher = options.fetcher ?? fetch;
+  const response = await fetcher(
+    `/api/plugin/exports/${options.exportId}/download`,
+    {
+      headers: {
+        "Authorization": `Bearer ${options.token}`,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Plugin export download failed: ${options.exportId}`);
+  }
+  const dto = await response.json() as PluginExportDownloadDto;
+  return {
+    contentType: dto.content_type,
+    exportId: dto.export_id,
+    manifest: dto.manifest,
+    files: dto.files,
+    checksum: dto.checksum
   };
 }
 
