@@ -3158,3 +3158,64 @@ def test_unity_restyle_preserves_layout_bindings():
         "width": 300,
         "height": 88,
     }
+
+
+def test_system_metrics_endpoint_returns_running_counts(tmp_path):
+    db_path = tmp_path / "metrics.sqlite3"
+    object_store_path = tmp_path / "metrics-objects"
+    configure_persistent_store(str(db_path))
+    configure_object_storage(str(object_store_path))
+
+    email = f"metrics-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "Metrics User"})
+    login_response = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Metrics Test Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1024, "height": 768},
+        },
+    ).json()
+
+    png_bytes = rgba_png_with_opaque_rects(512, 512, [{"x": 0, "y": 0, "width": 512, "height": 512}])
+
+    upload_response = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "splash.png",
+            "type": "original_upload",
+            "width": "512",
+            "height": "512",
+            "usage": "source_ui",
+        },
+        files={"file": ("splash.png", png_bytes, "image/png")},
+    )
+    assert upload_response.status_code == 201
+    uploaded = upload_response.json()
+    assert uploaded["id"].startswith("ast_")
+
+    client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "text-to-image",
+            "prompt": "game ui button",
+            "execution_mode": "queued",
+        },
+    )
+
+    metrics_response = client.get("/api/system/metrics", headers=headers)
+
+    assert metrics_response.status_code == 200
+    metrics = metrics_response.json()
+
+    assert metrics["queue"]["total"] >= 1
+    assert metrics["queue"]["queued"] >= 1
+    assert metrics["assets"]["total"] >= 1
+    assert metrics["assets"]["by_source"]["object_storage"] >= 1
+    assert metrics["audits"]["total"] >= 1

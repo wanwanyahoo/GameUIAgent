@@ -421,6 +421,71 @@ def production_readiness() -> dict[str, Any]:
     }
 
 
+@app.get("/api/system/metrics")
+def system_metrics(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    queue_items = list(store["ai_job_queue"].values())
+    queue_by_status: dict[str, int] = {}
+    for item in queue_items:
+        status = item.get("status", "unknown")
+        queue_by_status[status] = queue_by_status.get(status, 0) + 1
+
+    assets = list(store["assets"].values())
+    assets_by_source: dict[str, int] = {}
+    for asset in assets:
+        source = asset.get("source", "unknown")
+        assets_by_source[source] = assets_by_source.get(source, 0) + 1
+
+    imports = list(store["imports"].values())
+    imports_by_source: dict[str, int] = {}
+    for imp in imports:
+        source_type = imp.get("source", imp.get("source_type", "unknown"))
+        imports_by_source[source_type] = imports_by_source.get(source_type, 0) + 1
+
+    exports = list(store["exports"].values())
+    exports_by_engine: dict[str, int] = {}
+    for exp in exports:
+        engine = exp.get("target_engine", exp.get("engine", "unknown"))
+        exports_by_engine[engine] = exports_by_engine.get(engine, 0) + 1
+
+    emails = list(store["email_deliveries"].values())
+    emails_by_status: dict[str, int] = {}
+    for email in emails:
+        status = email.get("status", "unknown")
+        emails_by_status[status] = emails_by_status.get(status, 0) + 1
+
+    return {
+        "queue": {
+            "total": len(queue_items),
+            **queue_by_status,
+        },
+        "assets": {
+            "total": len(assets),
+            "by_source": assets_by_source,
+        },
+        "audits": {
+            "total": len(store["audit_events"]),
+        },
+        "imports": {
+            "total": len(imports),
+            "by_source": imports_by_source,
+        },
+        "exports": {
+            "total": len(exports),
+            "by_engine": exports_by_engine,
+        },
+        "email_deliveries": {
+            "total": len(emails),
+            "by_status": emails_by_status,
+        },
+        "projects": {
+            "total": len(store["projects"]),
+        },
+        "users": {
+            "total": len(store["users"]),
+        },
+    }
+
+
 @app.get("/api/marketing/capabilities")
 def marketing_capabilities() -> dict[str, Any]:
     capabilities = [
