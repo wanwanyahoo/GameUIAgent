@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth-context";
 import { getStudioStateApi, getProjectApi, type StudioState, type Project } from "../lib/projects-api";
 import { navigateTo } from "../lib/hash-router";
+import { runStudioAction } from "../lib/studio-actions";
 
 type StudioPageProps = {
   projectId: string;
@@ -22,6 +23,8 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
+  const [activeActionId, setActiveActionId] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!projectId) {
@@ -101,6 +104,23 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const completedTasks = tasks.filter((task) => task.status === "completed" || task.status === "succeeded" || task.status === "failed" || task.status === "ready");
   const liveStatus = isPolling ? "live" : "idle";
 
+  const handleStudioAction = async (actionId: string) => {
+    if (!token || !project || !studio || activeActionId) return;
+    try {
+      setActiveActionId(actionId);
+      setError(null);
+      setActionMessage(null);
+      const result = await runStudioAction({ actionId, token, project, studio });
+      setActionMessage(result.message);
+      const latestStudio = await getStudioStateApi(token, project.id);
+      setStudio(latestStudio);
+    } catch (err: any) {
+      setError(err.message || "Failed to run Studio action");
+    } finally {
+      setActiveActionId(null);
+    }
+  };
+
   return (
     <div className="studio-layout">
       <header className="studio-topbar">
@@ -152,12 +172,19 @@ export function StudioPage({ projectId }: StudioPageProps) {
             </p>
             <div className="canvas-actions">
               {studio.action_dock.map((action) => (
-                <button key={action.id} className="action-btn" type="button">
-                  {action.title}
+                <button
+                  key={action.id}
+                  className="action-btn"
+                  type="button"
+                  onClick={() => handleStudioAction(action.id)}
+                  disabled={activeActionId !== null}
+                >
+                  {activeActionId === action.id ? "Running..." : action.title}
                   <span className="shortcut">{action.shortcut}</span>
                 </button>
               ))}
             </div>
+            {actionMessage && <div className="studio-action-message">{actionMessage}</div>}
             {activeTasks.length > 0 && (
               <div className="active-tasks">
                 <h4>Active AI Tasks ({activeTasks.length})</h4>

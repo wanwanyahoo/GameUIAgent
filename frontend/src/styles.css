@@ -4612,12 +4612,30 @@ a {
   transform: translateY(-1px);
 }
 
+.action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
 .action-btn .shortcut {
   font-size: 0.72rem;
   color: rgba(124, 248, 255, 0.6);
   background: rgba(124, 248, 255, 0.1);
   padding: 0.15rem 0.4rem;
   border-radius: 0.3rem;
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.studio-action-message {
+  display: inline-flex;
+  margin: 0 auto 1rem auto;
+  padding: 0.55rem 0.8rem;
+  color: #d7ff66;
+  background: rgba(215, 255, 102, 0.1);
+  border: 1px solid rgba(215, 255, 102, 0.28);
+  border-radius: 0.6rem;
+  font-size: 0.82rem;
   font-family: "IBM Plex Mono", monospace;
 }
 

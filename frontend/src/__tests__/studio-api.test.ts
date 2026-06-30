@@ -14,6 +14,7 @@ import {
   previewStudioExportWizard,
   updateStudioAsset
 } from "../lib/studio-api";
+import { runStudioAction } from "../lib/studio-actions";
 
 describe("studio API client", () => {
   it("maps backend studio state into frontend camelCase models", async () => {
@@ -279,6 +280,69 @@ describe("studio API client", () => {
     assert.equal(versions[1]?.event, "updated");
     assert.equal(copied.id, "ast_copy");
     assert.equal(deleted.status, "deleted");
+  });
+
+  it("runs Studio action dock commands against real API operations", async () => {
+    const calls: string[] = [];
+    const studio = {
+      project_id: "prj_1",
+      active_selection: {
+        selected_layer_id: "button_primary",
+        selected_asset_id: "ast_generated",
+        active_task_id: "timeline_slice",
+      },
+      action_dock: [],
+      timeline: [],
+      segmentation_corrections: [
+        {
+          id: "correction_button_bounds",
+          target_layer_id: "button_primary",
+          title: "Primary CTA bounds",
+          change: "Resize hit box",
+          confidence: 0.92,
+          status: "pending",
+        },
+      ],
+      export_wizard: {
+        target_engine: "unity",
+        steps: [],
+      },
+    };
+    const project = {
+      id: "prj_1",
+      name: "Battle HUD",
+      target_engine: "unity",
+      canvas: { width: 1920, height: 1080 },
+      status: "active",
+      owner_id: "usr_1",
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+    const clients = {
+      createAiJob: async () => {
+        calls.push("ai");
+        return { id: "job_1" };
+      },
+      createSegmentation: async () => {
+        calls.push("segment");
+        return { id: "seg_1" };
+      },
+      applyCorrection: async () => {
+        calls.push("correction");
+        return { status: "applied" };
+      },
+      previewExport: async () => {
+        calls.push("export");
+        return { export: { id: "exp_1" } };
+      },
+    };
+
+    await runStudioAction({ actionId: "regenerate", token: "tok_1", project, studio, clients });
+    await runStudioAction({ actionId: "open-slice-editor", token: "tok_1", project, studio, clients });
+    await runStudioAction({ actionId: "apply-correction", token: "tok_1", project, studio, clients });
+    await runStudioAction({ actionId: "export-package", token: "tok_1", project, studio, clients });
+
+    assert.deepEqual(calls, ["ai", "segment", "correction", "export"]);
   });
 });
 
