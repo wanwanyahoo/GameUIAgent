@@ -77,6 +77,23 @@ const uploadToSliceChain = [
     detail: "PSD, PSB and Figma sources can submit parser jobs before layer-to-IR conversion."
   }
 ] as const;
+const assetLibraryOperations = [
+  {
+    title: "Search and tags",
+    endpoint: "/api/projects/{project_id}/assets?search=&tag=",
+    detail: "Filter production assets by filename and team-approved tags before generation, slicing or export."
+  },
+  {
+    title: "Rename and version",
+    endpoint: "/api/projects/{project_id}/assets/{asset_id}/versions",
+    detail: "Rename assets, update tags and keep created/updated snapshots for review and rollback planning."
+  },
+  {
+    title: "Copy and delete",
+    endpoint: "/api/projects/{project_id}/assets/{asset_id}",
+    detail: "Duplicate approved assets for variants, or remove obsolete uploads from the active project library."
+  }
+] as const;
 
 export function App() {
   return (
@@ -327,6 +344,23 @@ export function App() {
               <h3>{step.title}</h3>
               <code>{step.endpoint}</code>
               <p>{step.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" id="asset-ops">
+        <div className="section-heading">
+          <p className="eyebrow">Asset Library Operations</p>
+          <h2>Uploaded assets can now be searched, renamed, versioned, copied and deleted.</h2>
+        </div>
+        <div className="asset-ops">
+          {assetLibraryOperations.map((operation, index) => (
+            <article className="asset-op-card" key={operation.title}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{operation.title}</h3>
+              <code>{operation.endpoint}</code>
+              <p>{operation.detail}</p>
             </article>
           ))}
         </div>

@@ -332,6 +332,81 @@ def test_uploaded_asset_and_ai_job_reject_invalid_production_bounds():
     assert invalid_job_response.status_code == 422
 
 
+def test_project_asset_library_supports_search_update_copy_delete_and_versions():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Asset Library Ops",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    asset = client.post(
+        f"/api/projects/{project['id']}/assets",
+        headers=headers,
+        json={
+            "name": "shop-panel.png",
+            "type": "original_upload",
+            "url": "https://assets.gameuiagent.dev/shop-panel.png",
+            "width": 1024,
+            "height": 512,
+            "usage": "source_ui",
+            "tags": ["shop", "panel"],
+        },
+    ).json()
+
+    filtered = client.get(
+        f"/api/projects/{project['id']}/assets?search=shop&tag=panel",
+        headers=headers,
+    )
+
+    assert filtered.status_code == 200
+    assert [item["id"] for item in filtered.json()["assets"]] == [asset["id"]]
+
+    update_response = client.patch(
+        f"/api/projects/{project['id']}/assets/{asset['id']}",
+        headers=headers,
+        json={"name": "shop-panel-v2.png", "tags": ["shop", "panel", "approved"]},
+    )
+
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["name"] == "shop-panel-v2.png"
+    assert updated["metadata"]["tags"] == ["shop", "panel", "approved"]
+
+    versions_response = client.get(
+        f"/api/projects/{project['id']}/assets/{asset['id']}/versions",
+        headers=headers,
+    )
+
+    assert versions_response.status_code == 200
+    versions = versions_response.json()["versions"]
+    assert [version["event"] for version in versions] == ["created", "updated"]
+    assert versions[-1]["name"] == "shop-panel-v2.png"
+
+    copy_response = client.post(
+        f"/api/projects/{project['id']}/assets/{asset['id']}/copy",
+        headers=headers,
+    )
+
+    assert copy_response.status_code == 201
+    copied = copy_response.json()
+    assert copied["id"] != asset["id"]
+    assert copied["name"] == "shop-panel-v2.png Copy"
+    assert copied["metadata"]["tags"] == ["shop", "panel", "approved"]
+
+    delete_response = client.delete(
+        f"/api/projects/{project['id']}/assets/{asset['id']}",
+        headers=headers,
+    )
+
+    assert delete_response.status_code == 200
+    remaining = client.get(f"/api/projects/{project['id']}/assets", headers=headers).json()["assets"]
+    assert [item["id"] for item in remaining] == [copied["id"]]
+
+
 def test_project_ai_segmentation_and_unity_export_flow():
     headers = auth_headers()
 

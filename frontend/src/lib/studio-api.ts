@@ -59,6 +59,13 @@ export type StudioAsset = {
   };
 };
 
+export type StudioAssetVersion = {
+  id: string;
+  assetId: string;
+  event: string;
+  name: string;
+};
+
 export type StudioAiJob = {
   id: string;
   projectId: string;
@@ -119,6 +126,13 @@ type StudioAssetDto = {
     usage: string;
     tags?: string[];
   };
+};
+
+type StudioAssetVersionDto = {
+  id: string;
+  asset_id?: string;
+  event: string;
+  name: string;
 };
 
 type StudioAiJobDto = {
@@ -187,15 +201,97 @@ export async function createStudioAsset(options: {
 export async function listStudioAssets(options: {
   projectId: string;
   token: string;
+  search?: string;
+  tag?: string;
   fetcher?: StudioApiFetcher;
 }): Promise<StudioAsset[]> {
+  const query = new URLSearchParams();
+  if (options.search) {
+    query.set("search", options.search);
+  }
+  if (options.tag) {
+    query.set("tag", options.tag);
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
   const response = await requestStudioApi(
-    `/api/projects/${options.projectId}/assets`,
+    `/api/projects/${options.projectId}/assets${suffix}`,
     options.token,
     options.fetcher
   );
   const dto = await response.json() as { assets: StudioAssetDto[] };
   return dto.assets.map(mapStudioAssetDto);
+}
+
+export async function updateStudioAsset(options: {
+  projectId: string;
+  assetId: string;
+  token: string;
+  patch: {
+    name?: string;
+    tags?: string[];
+  };
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAsset> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/assets/${options.assetId}`,
+    options.token,
+    options.fetcher,
+    {
+      method: "PATCH",
+      body: JSON.stringify(options.patch)
+    }
+  );
+  return mapStudioAssetDto(await response.json() as StudioAssetDto);
+}
+
+export async function listStudioAssetVersions(options: {
+  projectId: string;
+  assetId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAssetVersion[]> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/assets/${options.assetId}/versions`,
+    options.token,
+    options.fetcher
+  );
+  const dto = await response.json() as { versions: StudioAssetVersionDto[] };
+  return dto.versions.map((version) => ({
+    id: version.id,
+    assetId: version.asset_id ?? options.assetId,
+    event: version.event,
+    name: version.name
+  }));
+}
+
+export async function copyStudioAsset(options: {
+  projectId: string;
+  assetId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAsset> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/assets/${options.assetId}/copy`,
+    options.token,
+    options.fetcher,
+    { method: "POST" }
+  );
+  return mapStudioAssetDto(await response.json() as StudioAssetDto);
+}
+
+export async function deleteStudioAsset(options: {
+  projectId: string;
+  assetId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<{ status: string }> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/assets/${options.assetId}`,
+    options.token,
+    options.fetcher,
+    { method: "DELETE" }
+  );
+  return response.json() as Promise<{ status: string }>;
 }
 
 export async function createStudioAiJob(options: {

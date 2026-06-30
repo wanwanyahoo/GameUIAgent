@@ -63,6 +63,11 @@ class AssetRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class AssetUpdateRequest(BaseModel):
+    name: str | None = None
+    tags: list[str] | None = None
+
+
 class AiJobRequest(BaseModel):
     kind: str
     prompt: str
@@ -184,6 +189,7 @@ store: dict[str, Any] = {
     "teams": {},
     "memberships": {},
     "password_reset_tokens": {},
+    "asset_versions": {},
 }
 
 
@@ -413,19 +419,86 @@ def create_project_asset(
     project = require_project(project_id, user)
     asset = build_uploaded_asset(project, payload)
     store["assets"][asset["id"]] = asset
+    record_asset_version(asset, "created")
     return asset
 
 
 @app.get("/api/projects/{project_id}/assets")
-def list_project_assets(project_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+def list_project_assets(
+    project_id: str,
+    search: str | None = None,
+    tag: str | None = None,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
     project = require_project(project_id, user)
     return {
         "assets": [
             asset
             for asset in store["assets"].values()
-            if asset["project_id"] == project["id"]
+            if asset_matches_library_filter(asset, project, search, tag)
         ]
     }
+
+
+@app.patch("/api/projects/{project_id}/assets/{asset_id}")
+def update_project_asset(
+    project_id: str,
+    asset_id: str,
+    payload: AssetUpdateRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    asset = require_project_asset(project, asset_id)
+    if payload.name is not None:
+        asset["name"] = payload.name
+    if payload.tags is not None:
+        asset.setdefault("metadata", {})["tags"] = payload.tags
+    record_asset_version(asset, "updated")
+    return asset
+
+
+@app.get("/api/projects/{project_id}/assets/{asset_id}/versions")
+def list_project_asset_versions(
+    project_id: str,
+    asset_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    require_project_asset(project, asset_id)
+    return {"versions": store["asset_versions"].get(asset_id, [])}
+
+
+@app.post("/api/projects/{project_id}/assets/{asset_id}/copy", status_code=status.HTTP_201_CREATED)
+def copy_project_asset(
+    project_id: str,
+    asset_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    asset = require_project_asset(project, asset_id)
+    copied = {
+        **asset,
+        "id": make_id("ast"),
+        "name": f"{asset['name']} Copy",
+        "metadata": dict(asset.get("metadata", {})),
+    }
+    if "tags" in asset.get("metadata", {}):
+        copied["metadata"]["tags"] = list(asset["metadata"]["tags"])
+    store["assets"][copied["id"]] = copied
+    record_asset_version(copied, "created")
+    return copied
+
+
+@app.delete("/api/projects/{project_id}/assets/{asset_id}")
+def delete_project_asset(
+    project_id: str,
+    asset_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, str]:
+    project = require_project(project_id, user)
+    require_project_asset(project, asset_id)
+    del store["assets"][asset_id]
+    return {"status": "deleted"}
 
 
 @app.post("/api/projects/{project_id}/ai/jobs", status_code=status.HTTP_201_CREATED)
@@ -1248,10 +1321,41 @@ def build_uploaded_asset(project: dict[str, Any], payload: AssetRequest) -> dict
 def require_optional_project_asset(project: dict[str, Any], asset_id: str | None) -> dict[str, Any] | None:
     if asset_id is None:
         return None
+    return require_project_asset(project, asset_id)
+
+
+def require_project_asset(project: dict[str, Any], asset_id: str) -> dict[str, Any]:
     asset = store["assets"].get(asset_id)
     if not asset or asset["project_id"] != project["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     return asset
+
+
+def asset_matches_library_filter(
+    asset: dict[str, Any],
+    project: dict[str, Any],
+    search: str | None,
+    tag: str | None,
+) -> bool:
+    if asset["project_id"] != project["id"]:
+        return False
+    if search and search.lower() not in asset["name"].lower():
+        return False
+    if tag and tag not in asset.get("metadata", {}).get("tags", []):
+        return False
+    return True
+
+
+def record_asset_version(asset: dict[str, Any], event: str) -> None:
+    store["asset_versions"].setdefault(asset["id"], []).append(
+        {
+            "id": make_id("ver"),
+            "asset_id": asset["id"],
+            "event": event,
+            "name": asset["name"],
+            "metadata": dict(asset.get("metadata", {})),
+        }
+    )
 
 
 def estimate_ai_job_credits(payload: AiJobRequest) -> int:

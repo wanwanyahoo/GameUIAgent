@@ -159,4 +159,14 @@ describe("App", () => {
     assert.match(html, /\/api\/projects\/\{project_id\}\/assets/);
     assert.match(html, /\/imports\/professional-sources/);
   });
+
+  it("renders the asset library management operations", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Asset Library Operations/);
+    assert.match(html, /Search and tags/);
+    assert.match(html, /Rename and version/);
+    assert.match(html, /Copy and delete/);
+    assert.match(html, /\/assets\/\{asset_id\}\/versions/);
+  });
 });

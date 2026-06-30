@@ -496,7 +496,8 @@ a {
 .credit-ledger,
 .plan-table,
 .account-grid,
-.upload-chain {
+.upload-chain,
+.asset-ops {
   display: grid;
   gap: 1rem;
 }
@@ -538,7 +539,8 @@ a {
 .credit-bucket,
 .plan-card,
 .account-card,
-.upload-step {
+.upload-step,
+.asset-op-card {
   min-height: 220px;
   padding: 1rem;
   border-radius: 1.2rem;
@@ -554,7 +556,8 @@ a {
 .credit-bucket span,
 .plan-card span,
 .account-card span,
-.upload-step span {
+.upload-step span,
+.asset-op-card span {
   color: #7cf8ff;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.74rem;
@@ -571,7 +574,8 @@ a {
 .credit-bucket h3,
 .plan-card h3,
 .account-card h3,
-.upload-step h3 {
+.upload-step h3,
+.asset-op-card h3 {
   margin: 1rem 0 0.7rem;
 }
 
@@ -584,7 +588,8 @@ a {
 .credit-bucket p,
 .plan-card p,
 .account-card p,
-.upload-step p {
+.upload-step p,
+.asset-op-card p {
   color: rgba(232, 247, 255, 0.68);
   line-height: 1.6;
 }
@@ -605,6 +610,10 @@ a {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.asset-ops {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .account-card {
   border: 1px solid rgba(215, 255, 102, 0.2);
   background:
@@ -619,7 +628,15 @@ a {
     linear-gradient(145deg, rgba(10, 24, 40, 0.86), rgba(5, 8, 14, 0.9));
 }
 
-.upload-step code {
+.asset-op-card {
+  border: 1px solid rgba(215, 255, 102, 0.2);
+  background:
+    radial-gradient(circle at 75% 20%, rgba(215, 255, 102, 0.12), transparent 12rem),
+    linear-gradient(145deg, rgba(18, 24, 18, 0.86), rgba(5, 8, 14, 0.9));
+}
+
+.upload-step code,
+.asset-op-card code {
   display: block;
   color: #d7ff66;
   font-family: "IBM Plex Mono", monospace;

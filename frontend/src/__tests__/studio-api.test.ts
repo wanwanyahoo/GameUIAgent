@@ -6,9 +6,13 @@ import {
   createStudioAiJob,
   createStudioAsset,
   createStudioSegmentation,
+  copyStudioAsset,
+  deleteStudioAsset,
   fetchStudioState,
+  listStudioAssetVersions,
   listStudioAssets,
-  previewStudioExportWizard
+  previewStudioExportWizard,
+  updateStudioAsset
 } from "../lib/studio-api";
 
 describe("studio API client", () => {
@@ -206,6 +210,76 @@ describe("studio API client", () => {
     assert.equal(segmentation.irId, "ir_1");
     assert.equal(segmentation.slices[0]?.editableBounds, true);
   });
+
+  it("manages uploaded asset library operations", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.includes("/versions")) {
+        return jsonResponse({
+          versions: [
+            { id: "ver_1", event: "created", name: "shop-panel.png" },
+            { id: "ver_2", event: "updated", name: "shop-panel-v2.png" }
+          ]
+        });
+      }
+      if (url.endsWith("/copy")) {
+        return jsonResponse(assetDto({ id: "ast_copy", name: "shop-panel-v2.png Copy" }));
+      }
+      if (init?.method === "PATCH") {
+        return jsonResponse(assetDto({ name: "shop-panel-v2.png", tags: ["shop", "approved"] }));
+      }
+      if (init?.method === "DELETE") {
+        return jsonResponse({ status: "deleted" });
+      }
+      return jsonResponse({ assets: [assetDto({})] });
+    };
+
+    const assets = await listStudioAssets({
+      projectId: "prj_1",
+      token: "tok_1",
+      fetcher,
+      search: "shop",
+      tag: "panel"
+    });
+    const updated = await updateStudioAsset({
+      projectId: "prj_1",
+      assetId: "ast_upload",
+      token: "tok_1",
+      fetcher,
+      patch: { name: "shop-panel-v2.png", tags: ["shop", "approved"] }
+    });
+    const versions = await listStudioAssetVersions({
+      projectId: "prj_1",
+      assetId: "ast_upload",
+      token: "tok_1",
+      fetcher
+    });
+    const copied = await copyStudioAsset({
+      projectId: "prj_1",
+      assetId: "ast_upload",
+      token: "tok_1",
+      fetcher
+    });
+    const deleted = await deleteStudioAsset({
+      projectId: "prj_1",
+      assetId: "ast_upload",
+      token: "tok_1",
+      fetcher
+    });
+
+    assert.equal(calls[0]?.url, "/api/projects/prj_1/assets?search=shop&tag=panel");
+    assert.equal(calls[1]?.init?.method, "PATCH");
+    assert.equal(calls[1]?.init?.body, JSON.stringify({ name: "shop-panel-v2.png", tags: ["shop", "approved"] }));
+    assert.equal(calls[2]?.url, "/api/projects/prj_1/assets/ast_upload/versions");
+    assert.equal(calls[3]?.init?.method, "POST");
+    assert.equal(calls[4]?.init?.method, "DELETE");
+    assert.equal(assets[0]?.id, "ast_upload");
+    assert.equal(updated.name, "shop-panel-v2.png");
+    assert.equal(versions[1]?.event, "updated");
+    assert.equal(copied.id, "ast_copy");
+    assert.equal(deleted.status, "deleted");
+  });
 });
 
 function jsonResponse(body: unknown): Response {
@@ -213,4 +287,20 @@ function jsonResponse(body: unknown): Response {
     ok: true,
     json: async () => body
   } as Response;
+}
+
+function assetDto(overrides: Partial<{
+  id: string;
+  name: string;
+  tags: string[];
+}>) {
+  return {
+    id: overrides.id ?? "ast_upload",
+    project_id: "prj_1",
+    type: "original_upload",
+    name: overrides.name ?? "shop-panel.png",
+    url: "https://assets/shop-panel.png",
+    source: "upload",
+    metadata: { width: 1024, height: 512, usage: "source_ui", tags: overrides.tags ?? ["shop", "panel"] }
+  };
 }
