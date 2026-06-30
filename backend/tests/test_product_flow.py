@@ -3219,3 +3219,62 @@ def test_system_metrics_endpoint_returns_running_counts(tmp_path):
     assert metrics["assets"]["total"] >= 1
     assert metrics["assets"]["by_source"]["object_storage"] >= 1
     assert metrics["audits"]["total"] >= 1
+
+
+def test_worker_dequeue_and_task_completion_flow(tmp_path):
+    db_path = tmp_path / "worker.sqlite3"
+    object_store_path = tmp_path / "worker-objects"
+    configure_persistent_store(str(db_path))
+    configure_object_storage(str(object_store_path))
+    configure_worker_token("test-worker-token")
+
+    email = f"worker-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "Worker Test User"})
+    login_response = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Worker Test Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1024, "height": 768},
+        },
+    ).json()
+
+    client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "text-to-image",
+            "prompt": "game ui button",
+            "execution_mode": "queued",
+        },
+    )
+
+    worker_headers = {"X-Worker-Token": "test-worker-token"}
+
+    dequeue_response = client.post("/api/worker/jobs/dequeue", headers=worker_headers)
+    assert dequeue_response.status_code == 200
+    dequeued = dequeue_response.json()
+    assert dequeued["status"] == "dequeued"
+    assert dequeued["queue_item"]["status"] == "locked"
+    assert "worker" in dequeued["queue_item"]
+
+    complete_response = client.post(
+        f"/api/worker/jobs/{dequeued['queue_item']['id']}/complete",
+        headers=worker_headers,
+        json={
+            "status": "succeeded",
+            "result": {
+                "asset_id": "ast_test_123",
+                "image_url": "/api/assets/ast_test_123/download",
+                "credits_used": 10,
+            },
+        },
+    )
+    assert complete_response.status_code == 200
+    completed = complete_response.json()
+    assert completed["queue_item"]["status"] == "succeeded"
+    assert completed["job"]["status"] == "succeeded"

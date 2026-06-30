@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 from hashlib import pbkdf2_hmac
 from hmac import compare_digest
@@ -909,6 +910,86 @@ def create_ai_job(
             metadata={"result_asset_id": job.get("result_asset", {}).get("id")},
         )
     return job
+
+
+@app.post("/api/worker/jobs/dequeue")
+def dequeue_ai_job(_worker_authorized: bool = Depends(require_worker_token)) -> dict[str, Any]:
+    queue_item = next(
+        (item for item in store["ai_job_queue"].values() if item["status"] == "queued"),
+        None,
+    )
+    if not queue_item:
+        return {"status": "idle", "queue_item": None}
+    job = store["jobs"].get(queue_item["job_id"])
+    project = store["projects"].get(queue_item["project_id"])
+    if not job or not project:
+        queue_item["status"] = "failed"
+        queue_item["error"] = "Queued job lost its project or job record"
+        store.flush()
+        return {"status": "failed", "queue_item": queue_item, "job": None}
+    queue_item["status"] = "locked"
+    queue_item["worker"] = "worker-" + queue_item.get("id", "")[-8:]
+    queue_item["locked_at"] = datetime.now(timezone.utc).isoformat()
+    job["status"] = "running"
+    job["progress"] = 25
+    store.flush()
+    return {"status": "dequeued", "queue_item": queue_item, "job": job, "project": {"id": project["id"], "name": project["name"]}}
+
+
+class WorkerCompleteRequest(BaseModel):
+    status: str
+    result: dict[str, Any] | None = None
+    error: str | None = None
+
+
+@app.post("/api/worker/jobs/{queue_id}/complete")
+def complete_worker_job(
+    queue_id: str,
+    payload: WorkerCompleteRequest,
+    _worker_authorized: bool = Depends(require_worker_token),
+) -> dict[str, Any]:
+    queue_item = store["ai_job_queue"].get(queue_id)
+    if not queue_item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue item not found")
+    if queue_item["status"] != "locked":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Queue item is not locked")
+    job = store["jobs"].get(queue_item["job_id"])
+    project = store["projects"].get(queue_item["project_id"])
+    if not job or not project:
+        queue_item["status"] = "failed"
+        queue_item["error"] = "Job or project not found"
+        store.flush()
+        return {"status": "failed", "queue_item": queue_item}
+
+    if payload.status == "succeeded":
+        queue_item["status"] = "succeeded"
+        job["status"] = "succeeded"
+        job["progress"] = 100
+        job["completed_at"] = datetime.now(timezone.utc).isoformat()
+        if payload.result:
+            job["result"] = payload.result
+            if payload.result.get("asset_id"):
+                job["output_asset_ids"] = [payload.result["asset_id"]]
+    else:
+        queue_item["status"] = "failed"
+        queue_item["error"] = payload.error or "Worker failed"
+        job["status"] = "failed"
+        job["progress"] = 0
+        job["error"] = payload.error or "Worker failed"
+
+    job["queue"] = queue_item
+    if job["status"] in {"succeeded", "failed"}:
+        append_audit_event(
+            project["id"],
+            f"ai_job_{job['status']}",
+            None,
+            "ai_job",
+            job["id"],
+            status_value=job["status"],
+            metadata={"queue_id": queue_item["id"], "worker": queue_item.get("worker")},
+        )
+    store.flush()
+    return {"status": job["status"], "queue_item": queue_item, "job": job}
 
 
 @app.post("/api/system/ai-worker/run-next")
