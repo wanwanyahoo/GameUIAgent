@@ -695,6 +695,13 @@ def create_ai_job(
         }
         job["queue"] = queue_item
         store["ai_job_queue"][queue_item["id"]] = queue_item
+    elif inference_provider_name == "qwen":
+        try:
+            complete_ai_job(project, job, run_inference_provider(project, job))
+        except RuntimeError as exc:
+            job["status"] = "failed"
+            job["progress"] = 0
+            job["error"] = str(exc)
     else:
         complete_ai_job(project, job)
     store["jobs"][job["id"]] = job

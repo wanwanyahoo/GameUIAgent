@@ -928,6 +928,74 @@ def test_qwen_layered_slice_parser_ignores_malformed_provider_shapes():
     assert extract_qwen_layered_slices({"output": {"results": {"layered_slices": []}}}) == []
 
 
+def test_inline_qwen_text_to_image_preserves_layered_slices(tmp_path, monkeypatch):
+    configure_persistent_store(str(tmp_path / "inline-qwen-layered.sqlite3"))
+    configure_inference_provider("qwen")
+    monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
+    captured_payload: dict[str, object] = {}
+
+    class FakeQwenResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "id": "qwen-inline-layered-job",
+                "data": [
+                    {
+                        "url": "https://qwen.example/inline-layered-ui.png",
+                        "layered_slices": [
+                            {
+                                "id": "inline_inventory_panel",
+                                "type": "panel",
+                                "name": "Inline Inventory Panel",
+                                "rect": {"x": 40, "y": 36, "width": 360, "height": 260},
+                                "confidence": 0.95,
+                            }
+                        ],
+                    }
+                ],
+            }
+
+    def fake_qwen_post(*_args, **kwargs):
+        captured_payload.update(kwargs["json"])
+        return FakeQwenResponse()
+
+    monkeypatch.setattr("app.main.httpx.post", fake_qwen_post)
+    try:
+        headers = auth_headers()
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={
+                "name": "Inline Qwen Slice UI",
+                "target_engine": "unity",
+                "canvas": {"width": 512, "height": 384},
+            },
+        ).json()
+
+        job_response = client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={
+                "kind": "text_to_image",
+                "prompt": "Generate inventory UI with layered slices",
+                "model": "qwen-layered-slice",
+                "execution_mode": "inline",
+            },
+        )
+
+        assert job_response.status_code == 201
+        job = job_response.json()
+        assert captured_payload["model"] == "qwen-layered-slice"
+        assert job["status"] == "succeeded"
+        assert job["inference"]["provider"] == "qwen"
+        assert job["result_asset"]["url"] == "https://qwen.example/inline-layered-ui.png"
+        assert job["result_asset"]["metadata"]["layered_slices"][0]["id"] == "inline_inventory_panel"
+    finally:
+        configure_inference_provider("local-deterministic")
+
+
 def test_ai_worker_marks_job_failed_when_inference_provider_fails(tmp_path):
     db_path = tmp_path / "inference-failure.sqlite3"
     configure_persistent_store(str(db_path))
