@@ -1,13 +1,12 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../lib/auth-context";
+import { navigateTo } from "../lib/hash-router";
 
 type AuthPageProps = {
   mode: "login" | "register";
-  onModeChange: (mode: "login" | "register") => void;
-  onSuccess?: () => void;
 };
 
-export function AuthPage({ mode, onModeChange, onSuccess }: AuthPageProps) {
+export function AuthPage({ mode }: AuthPageProps) {
   const { login, register, isLoading, error, clearError } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,7 +46,7 @@ export function AuthPage({ mode, onModeChange, onSuccess }: AuthPageProps) {
       } else {
         await register({ email, password, name });
       }
-      onSuccess?.();
+      navigateTo("/dashboard");
     } catch {
     }
   }
@@ -55,7 +54,7 @@ export function AuthPage({ mode, onModeChange, onSuccess }: AuthPageProps) {
   function switchMode() {
     setFormError(null);
     clearError();
-    onModeChange(isLogin ? "register" : "login");
+    navigateTo(isLogin ? "/register" : "/login");
   }
 
   const displayError = formError || error;

@@ -10,6 +10,7 @@ type SettingsPageProps = {
 const tabs = [
   { id: "billing", label: "Billing", icon: "💳" },
   { id: "api-keys", label: "API Keys", icon: "🔑" },
+  { id: "webhooks", label: "Webhooks", icon: "🔗" },
   { id: "developer", label: "Developer", icon: "⚡" },
   { id: "team", label: "Team", icon: "👥" },
   { id: "profile", label: "Profile", icon: "👤" },

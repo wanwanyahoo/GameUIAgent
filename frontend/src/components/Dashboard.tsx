@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth-context";
+import { navigateTo } from "../lib/hash-router";
 import { createProjectApi, listProjectsApi, type Project } from "../lib/projects-api";
 
 const engineLabels: Record<string, string> = {
@@ -78,10 +79,10 @@ export function Dashboard() {
           <span>GameUIAgent</span>
         </div>
         <div className="dashboard-nav">
-          <a href="#projects" className="nav-active">Projects</a>
-          <a href="#billing">Billing</a>
-          <a href="#api-keys">API Keys</a>
-          <a href="#docs">Docs</a>
+          <button type="button" className="nav-link nav-active" onClick={() => navigateTo("/dashboard")}>Projects</button>
+          <button type="button" className="nav-link" onClick={() => navigateTo("/settings/billing")}>Billing</button>
+          <button type="button" className="nav-link" onClick={() => navigateTo("/settings/api-keys")}>API Keys</button>
+          <button type="button" className="nav-link" onClick={() => navigateTo("/settings/developer")}>Docs</button>
         </div>
         <div className="dashboard-user">
           <span className="user-email">{user?.email || "user"}</span>
@@ -147,9 +148,10 @@ export function Dashboard() {
           ) : (
             <div className="projects-grid">
               {projects.map((project) => (
-                <a
+                <button
                   key={project.id}
-                  href={`#studio/${project.id}`}
+                  type="button"
+                  onClick={() => navigateTo(`/studio`)}
                   className="project-card"
                 >
                   <div className="project-thumb">
@@ -165,7 +167,7 @@ export function Dashboard() {
                       {project.status === "active" ? "Active" : project.status}
                     </span>
                   </div>
-                </a>
+                </button>
               ))}
 
               <button

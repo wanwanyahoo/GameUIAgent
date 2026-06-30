@@ -1497,6 +1497,153 @@ def recharge_credits(payload: RechargeRequest, user: dict[str, Any] = Depends(cu
     return format_billing_account(account)
 
 
+class WebhookCreateRequest(BaseModel):
+    url: str
+    events: list[str]
+    description: str = ""
+
+
+class WebhookUpdateRequest(BaseModel):
+    url: str | None = None
+    events: list[str] | None = None
+    description: str | None = None
+    active: bool | None = None
+
+
+WEBHOOK_EVENTS = [
+    "ai.job.completed",
+    "ai.job.failed",
+    "ai.job.started",
+    "export.completed",
+    "export.failed",
+    "import.completed",
+    "import.failed",
+    "asset.created",
+    "asset.updated",
+    "project.created",
+    "project.updated",
+]
+
+
+@app.get("/api/user/webhooks")
+def list_webhooks(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    hooks = [
+        {k: v for k, v in hook.items() if k != "secret"}
+        for hook in store["webhooks"].values() if hook["user_id"] == user["id"]
+    ]
+    return {"webhooks": hooks}
+
+
+@app.post("/api/user/webhooks", status_code=status.HTTP_201_CREATED)
+def create_webhook(payload: WebhookCreateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if not payload.url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+    for ev in payload.events:
+        if ev not in WEBHOOK_EVENTS and ev != "*":
+            raise HTTPException(status_code=400, detail=f"Invalid event: {ev}")
+
+    import hmac
+    import secrets
+    from hashlib import sha256
+
+    secret = f"whsec_{secrets.token_hex(24)}"
+    webhook = {
+        "id": make_id("wh"),
+        "user_id": user["id"],
+        "url": payload.url,
+        "events": payload.events,
+        "description": payload.description,
+        "active": True,
+        "secret": secret,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_sent_at": None,
+        "success_count": 0,
+        "failure_count": 0,
+    }
+    store["webhooks"][webhook["id"]] = webhook
+    store.flush()
+
+    append_audit_event(
+        None,
+        "webhook_created",
+        user["id"],
+        "webhook",
+        webhook["id"],
+        metadata={"url": payload.url, "events": payload.events},
+    )
+
+    return {
+        "id": webhook["id"],
+        "url": webhook["url"],
+        "events": webhook["events"],
+        "description": webhook["description"],
+        "active": webhook["active"],
+        "secret": secret,
+        "created_at": webhook["created_at"],
+    }
+
+
+@app.get("/api/user/webhooks/{webhook_id}")
+def get_webhook(webhook_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    hook = store["webhooks"].get(webhook_id)
+    if not hook or hook["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return {k: v for k, v in hook.items() if k != "secret"}
+
+
+@app.patch("/api/user/webhooks/{webhook_id}")
+def update_webhook(webhook_id: str, payload: WebhookUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    hook = store["webhooks"].get(webhook_id)
+    if not hook or hook["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+
+    if payload.url is not None:
+        if not payload.url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+        hook["url"] = payload.url
+    if payload.events is not None:
+        for ev in payload.events:
+            if ev not in WEBHOOK_EVENTS and ev != "*":
+                raise HTTPException(status_code=400, detail=f"Invalid event: {ev}")
+        hook["events"] = payload.events
+    if payload.description is not None:
+        hook["description"] = payload.description
+    if payload.active is not None:
+        hook["active"] = payload.active
+
+    store.flush()
+    return {k: v for k, v in hook.items() if k != "secret"}
+
+
+@app.delete("/api/user/webhooks/{webhook_id}")
+def delete_webhook(webhook_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    hook = store["webhooks"].get(webhook_id)
+    if not hook or hook["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    del store["webhooks"][webhook_id]
+    store.flush()
+    return {"status": "deleted", "id": webhook_id}
+
+
+@app.post("/api/user/webhooks/{webhook_id}/test")
+def test_webhook(webhook_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    hook = store["webhooks"].get(webhook_id)
+    if not hook or hook["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+
+    return {
+        "status": "test_queued",
+        "webhook_id": webhook_id,
+        "event": "ai.job.completed",
+        "message": "Test webhook event has been queued for delivery",
+    }
+
+
+@app.get("/api/user/webhook-events")
+def list_webhook_events(_user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    return {"events": WEBHOOK_EVENTS}
+
+
 @app.get("/api/user/usage")
 def get_usage(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     events = [

@@ -1,10 +1,7 @@
 import { useState } from "react";
+import { navigateTo } from "../lib/hash-router";
 
-type LandingPageProps = {
-  onGetStarted: () => void;
-};
-
-export function LandingPage({ onGetStarted }: LandingPageProps) {
+export function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const features = [
@@ -127,10 +124,10 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
           </div>
 
           <div className="nav-actions">
-            <button type="button" className="nav-signin" onClick={onGetStarted}>
+            <button type="button" className="nav-signin" onClick={() => navigateTo("/login")}>
               Sign In
             </button>
-            <button type="button" className="btn-primary nav-started" onClick={onGetStarted}>
+            <button type="button" className="btn-primary nav-started" onClick={() => navigateTo("/register")}>
               Get Started
             </button>
           </div>
@@ -165,7 +162,7 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
             and export game UI directly to Unity, Cocos, Godot, and Unreal.
           </p>
           <div className="hero-actions">
-            <button type="button" className="btn-primary btn-lg" onClick={onGetStarted}>
+            <button type="button" className="btn-primary btn-lg" onClick={() => navigateTo("/register")}>
               Start Creating Free
             </button>
             <button type="button" className="btn-outline btn-lg">
@@ -292,7 +289,7 @@ export function LandingPage({ onGetStarted }: LandingPageProps) {
               <button
                 type="button"
                 className={plan.highlight ? "btn-primary btn-block" : "btn-outline btn-block"}
-                onClick={onGetStarted}
+                onClick={() => navigateTo("/register")}
               >
                 {plan.cta}
               </button>

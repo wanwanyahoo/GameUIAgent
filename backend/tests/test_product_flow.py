@@ -3508,3 +3508,88 @@ def test_api_keys_isolated_per_user(tmp_path):
     assert len(list2["api_keys"]) == 1
     assert list2["api_keys"][0]["name"] == "User2 Key"
 
+
+def test_webhooks_crud_flow(tmp_path):
+    configure_persistent_store(str(tmp_path / "webhooks.sqlite3"))
+    configure_object_storage(str(tmp_path / "webhooks-objects"))
+
+    email = f"wh-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "WH User"})
+    login = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    events_resp = client.get("/api/user/webhook-events", headers=headers)
+    assert events_resp.status_code == 200
+    assert "ai.job.completed" in events_resp.json()["events"]
+
+    list_empty = client.get("/api/user/webhooks", headers=headers).json()
+    assert list_empty["webhooks"] == []
+
+    create_resp = client.post("/api/user/webhooks", headers=headers, json={
+        "url": "https://example.com/webhook",
+        "events": ["ai.job.completed", "ai.job.failed"],
+        "description": "Production webhook",
+    })
+    assert create_resp.status_code == 201
+    created = create_resp.json()
+    assert created["url"] == "https://example.com/webhook"
+    assert len(created["events"]) == 2
+    assert created["active"] is True
+    assert created["secret"].startswith("whsec_")
+    assert "id" in created
+    assert "created_at" in created
+
+    list_after = client.get("/api/user/webhooks", headers=headers).json()
+    assert len(list_after["webhooks"]) == 1
+    assert "secret" not in list_after["webhooks"][0]
+    assert list_after["webhooks"][0]["url"] == "https://example.com/webhook"
+
+    get_resp = client.get(f"/api/user/webhooks/{created['id']}", headers=headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["description"] == "Production webhook"
+
+    update_resp = client.patch(f"/api/user/webhooks/{created['id']}", headers=headers, json={
+        "active": False,
+        "description": "Disabled",
+    })
+    assert update_resp.status_code == 200
+    assert update_resp.json()["active"] is False
+    assert update_resp.json()["description"] == "Disabled"
+
+    test_resp = client.post(f"/api/user/webhooks/{created['id']}/test", headers=headers)
+    assert test_resp.status_code == 200
+    assert test_resp.json()["status"] == "test_queued"
+
+    delete_resp = client.delete(f"/api/user/webhooks/{created['id']}", headers=headers)
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["status"] == "deleted"
+
+    list_final = client.get("/api/user/webhooks", headers=headers).json()
+    assert len(list_final["webhooks"]) == 0
+
+
+def test_webhooks_validation(tmp_path):
+    configure_persistent_store(str(tmp_path / "whval.sqlite3"))
+    configure_object_storage(str(tmp_path / "whval-objects"))
+
+    email = f"whval-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "User"})
+    login = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+    bad_url = client.post("/api/user/webhooks", headers=headers, json={
+        "url": "ftp://bad.url",
+        "events": ["ai.job.completed"],
+    })
+    assert bad_url.status_code == 400
+
+    bad_event = client.post("/api/user/webhooks", headers=headers, json={
+        "url": "https://example.com/hook",
+        "events": ["nonexistent.event"],
+    })
+    assert bad_event.status_code == 400
+
+    not_found = client.get("/api/user/webhooks/wh_nonexistent", headers=headers)
+    assert not_found.status_code == 404
+
+

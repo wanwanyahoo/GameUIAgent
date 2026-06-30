@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { App } from "../App";
+import { App as StudioApp } from "../StudioApp";
 
-describe("App", () => {
+describe("StudioApp", () => {
   it("matches the VberAI homepage information architecture with GameUIAgent branding", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /GameUIAgent · AI 原生游戏生产力平台/);
     assert.match(html, /登录/);
@@ -28,7 +28,7 @@ describe("App", () => {
   });
 
   it("renders the replicated official site and studio entry points", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /一站式 AI 游戏开发/i);
     assert.match(html, /AI Studio/i);
@@ -37,7 +37,7 @@ describe("App", () => {
   });
 
   it("shows the end-to-end production workflow", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Import or Generate/);
     assert.match(html, /Structure as Asset IR/);
@@ -45,7 +45,7 @@ describe("App", () => {
   });
 
   it("renders professional import and AI pipeline sections", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Professional imports/);
     assert.match(html, /PSD layers/);
@@ -56,7 +56,7 @@ describe("App", () => {
   });
 
   it("renders the Unity plugin protocol and restyle chain", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Unity plugin protocol/);
     assert.match(html, /Manifest/);
@@ -67,7 +67,7 @@ describe("App", () => {
   });
 
   it("renders the multi-engine export matrix", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Multi-engine export matrix/);
     assert.match(html, /Unity, Cocos, Godot and Unreal/);
@@ -81,7 +81,7 @@ describe("App", () => {
   });
 
   it("renders the engine plugin connection sequence", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Engine plugin connection/);
     assert.match(html, /Plugin Auth/);
@@ -91,7 +91,7 @@ describe("App", () => {
   });
 
   it("renders billing credits and developer API limits", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Credits and billing/);
     assert.match(html, /Daily Free Credits/);
@@ -102,7 +102,7 @@ describe("App", () => {
   });
 
   it("rebrands visible VberAI references to GameUIAgent", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.doesNotMatch(html, /VberAI/);
     assert.match(html, /GameUIAgent · AI 原生游戏生产力平台/);
@@ -110,7 +110,7 @@ describe("App", () => {
   });
 
   it("renders the complete AI Studio interaction workspace", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Asset Library/);
     assert.match(html, /Task Timeline/);
@@ -121,7 +121,7 @@ describe("App", () => {
   });
 
   it("renders actionable studio correction and export controls", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Action Dock/);
     assert.match(html, /Regenerate/);
@@ -133,7 +133,7 @@ describe("App", () => {
   });
 
   it("renders Unreal plugin import log telemetry", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Plugin Import Telemetry/);
     assert.match(html, /Unreal 5.3\+ import summary/);
@@ -144,7 +144,7 @@ describe("App", () => {
   });
 
   it("renders the verified PSD to Unity plugin core chain", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Core Chain Self-Test/);
     assert.match(html, /PSD layered import/);
@@ -154,7 +154,7 @@ describe("App", () => {
   });
 
   it("renders completed account and docs center capabilities", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Completeness Status/);
     assert.match(html, /Core engine chain: verified/);
@@ -171,7 +171,7 @@ describe("App", () => {
   });
 
   it("renders the uploaded asset to slice production chain", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Upload-to-Slice Chain/);
     assert.match(html, /Uploaded Asset API/);
@@ -183,7 +183,7 @@ describe("App", () => {
   });
 
   it("renders the asset library management operations", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Asset Library Operations/);
     assert.match(html, /Search and tags/);
@@ -193,7 +193,7 @@ describe("App", () => {
   });
 
   it("renders the production runtime foundation", () => {
-    const html = renderToStaticMarkup(<App />);
+    const html = renderToStaticMarkup(<StudioApp />);
 
     assert.match(html, /Production Runtime/);
     assert.match(html, /SQLite durable store/);

@@ -20,6 +20,7 @@ STORE_SECTIONS = [
     "snapshots",
     "imports",
     "api_keys",
+    "webhooks",
     "developer_tasks",
     "import_logs",
     "plugin_devices",
