@@ -551,6 +551,75 @@ def test_password_reset_rotates_password_and_consumes_token():
     ).status_code == 404
 
 
+def test_password_reset_sends_configured_smtp_email_and_persists_delivery(tmp_path, monkeypatch):
+    db_path = tmp_path / "smtp-email.sqlite3"
+    configure_persistent_store(str(db_path))
+    email = f"smtp-reset-{uuid4().hex}@gameuiagent.dev"
+    sent_messages: list[object] = []
+
+    class FakeSMTP:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            assert host == "smtp.gameuiagent.dev"
+            assert port == 2525
+            assert timeout == 10
+
+        def __enter__(self) -> "FakeSMTP":
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+        def starttls(self) -> None:
+            return None
+
+        def login(self, username: str, password: str) -> None:
+            assert username == "mailer"
+            assert password == "mailer-secret"
+
+        def send_message(self, message: object) -> None:
+            sent_messages.append(message)
+
+    monkeypatch.setenv("GAMEUIAGENT_SMTP_HOST", "smtp.gameuiagent.dev")
+    monkeypatch.setenv("GAMEUIAGENT_SMTP_PORT", "2525")
+    monkeypatch.setenv("GAMEUIAGENT_SMTP_USERNAME", "mailer")
+    monkeypatch.setenv("GAMEUIAGENT_SMTP_PASSWORD", "mailer-secret")
+    monkeypatch.setenv("GAMEUIAGENT_EMAIL_FROM", "no-reply@gameuiagent.dev")
+    monkeypatch.setenv("GAMEUIAGENT_APP_URL", "https://app.gameuiagent.dev")
+    monkeypatch.setattr("app.main.smtplib.SMTP", FakeSMTP)
+    client.post(
+        "/api/auth/register",
+        json={"email": email, "password": "old-secret", "name": "SMTP Reset User"},
+    )
+
+    request_response = client.post("/api/auth/password-reset/request", json={"email": email})
+
+    assert request_response.status_code == 200
+    response_payload = request_response.json()
+    assert response_payload["delivery"] == "smtp"
+    assert "reset_token" not in response_payload
+    assert len(sent_messages) == 1
+    message = sent_messages[0]
+    assert message["To"] == email
+    assert message["From"] == "no-reply@gameuiagent.dev"
+    assert "Password reset" in message["Subject"]
+    reset_token = next(
+        token
+        for token, reset in store["password_reset_tokens"].items()
+        if reset["email"] == email
+    )
+    assert reset_token in message.get_content()
+    assert "https://app.gameuiagent.dev/reset-password" in message.get_content()
+    delivery = next(iter(store["email_deliveries"].values()))
+    assert delivery["status"] == "sent"
+    assert delivery["provider"] == "smtp"
+    assert delivery["template"] == "password_reset"
+    assert delivery["to"] == email
+
+    reloaded_store = create_production_store()
+    reloaded_store.configure(str(db_path))
+    assert next(iter(reloaded_store["email_deliveries"].values()))["status"] == "sent"
+
+
 def test_team_roles_allow_owner_to_manage_members():
     headers = auth_headers()
 

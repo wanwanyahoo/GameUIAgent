@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import smtplib
+from email.message import EmailMessage
 from hashlib import pbkdf2_hmac
 from hmac import compare_digest
 from os import getenv
@@ -246,6 +248,69 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+def smtp_email_configured() -> bool:
+    return bool(getenv("GAMEUIAGENT_SMTP_HOST") and getenv("GAMEUIAGENT_EMAIL_FROM"))
+
+
+def email_delivery_provider() -> str:
+    return "smtp" if smtp_email_configured() else "local-outbox"
+
+
+def deliver_password_reset_email(email: str, reset_token: str) -> dict[str, Any]:
+    delivery = {
+        "id": make_id("eml"),
+        "template": "password_reset",
+        "to": email,
+        "provider": email_delivery_provider(),
+        "status": "queued",
+        "subject": "GameUIAgent Password reset",
+    }
+    store["email_deliveries"][delivery["id"]] = delivery
+    if not smtp_email_configured():
+        return delivery
+    try:
+        send_smtp_email(build_password_reset_email(email, reset_token))
+    except Exception:
+        delivery["status"] = "failed"
+        delivery["error"] = "smtp_delivery_failed"
+        store.flush()
+        return delivery
+    delivery["status"] = "sent"
+    store.flush()
+    return delivery
+
+
+def build_password_reset_email(email: str, reset_token: str) -> EmailMessage:
+    app_url = getenv("GAMEUIAGENT_APP_URL", "https://app.gameuiagent.dev").rstrip("/")
+    reset_url = f"{app_url}/reset-password?token={reset_token}"
+    message = EmailMessage()
+    message["To"] = email
+    message["From"] = getenv("GAMEUIAGENT_EMAIL_FROM", "no-reply@gameuiagent.dev")
+    message["Subject"] = "GameUIAgent Password reset"
+    message.set_content(
+        "Reset your GameUIAgent password with the secure link below.\n\n"
+        f"{reset_url}\n\n"
+        "This link expires in 15 minutes. If you did not request this, you can ignore this email."
+    )
+    return message
+
+
+def send_smtp_email(message: EmailMessage) -> None:
+    host = getenv("GAMEUIAGENT_SMTP_HOST")
+    if not host:
+        raise RuntimeError("SMTP host is not configured")
+    port = int(getenv("GAMEUIAGENT_SMTP_PORT", "587"))
+    username = getenv("GAMEUIAGENT_SMTP_USERNAME")
+    password = getenv("GAMEUIAGENT_SMTP_PASSWORD")
+    use_tls = getenv("GAMEUIAGENT_SMTP_TLS", "true").lower() != "false"
+    with smtplib.SMTP(host, port, timeout=10) as smtp:
+        if use_tls:
+            smtp.starttls()
+        if username and password:
+            smtp.login(username, password)
+        smtp.send_message(message)
+
+
 def current_user(authorization: str = Header(default="")) -> dict[str, Any]:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or token not in store["tokens"]:
@@ -275,6 +340,7 @@ def health() -> dict[str, str]:
 def production_readiness() -> dict[str, Any]:
     durable = store.db_path is not None
     object_durable = object_storage.durable
+    email_configured = smtp_email_configured()
     return {
         "status": "production_foundation_ready" if durable and object_durable else "ephemeral_demo_mode",
         "storage": {
@@ -294,12 +360,18 @@ def production_readiness() -> dict[str, Any]:
             "configured": inference_provider_configured(),
             "qwen_endpoint": qwen_inference_endpoint() if inference_provider_name == "qwen" else None,
         },
+        "email": {
+            "provider": "smtp" if email_configured else "local-outbox",
+            "configured": email_configured,
+            "from": getenv("GAMEUIAGENT_EMAIL_FROM"),
+        },
         "checks": [
             "durable_store" if durable else "ephemeral_store",
             "object_storage" if object_durable else "missing_object_storage",
             "ai_job_queue",
             "worker_auth" if worker_token else "missing_worker_auth",
             "inference_provider" if inference_provider_configured() else "missing_inference_provider",
+            "smtp_email" if email_configured else "missing_smtp_email",
             "salted_password_hashes",
             "project_ownership_guards",
             "engine_manifest_contracts",
@@ -364,10 +436,11 @@ def login(payload: LoginRequest) -> dict[str, str]:
 def request_password_reset(payload: PasswordResetRequest) -> dict[str, Any]:
     user = store["users"].get(payload.email)
     if not user:
-        return {"status": "queued", "delivery": "email"}
+        return {"status": "queued", "delivery": email_delivery_provider()}
     reset_token = make_id("rst")
     store["password_reset_tokens"][reset_token] = {"email": payload.email, "user_id": user["id"]}
-    return {"status": "queued", "delivery": "email", "expires_in": 900}
+    delivery = deliver_password_reset_email(payload.email, reset_token)
+    return {"status": "queued", "delivery": delivery["provider"], "expires_in": 900}
 
 
 @app.post("/api/auth/password-reset/confirm")

@@ -29,6 +29,7 @@ STORE_SECTIONS = [
     "teams",
     "memberships",
     "password_reset_tokens",
+    "email_deliveries",
     "asset_versions",
 ]
 
