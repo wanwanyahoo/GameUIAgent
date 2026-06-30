@@ -1182,6 +1182,97 @@ def test_professional_import_source_submission_creates_parser_job():
     assert figma_response.json()["ir"]["professional_source"]["frame_id"] == "12:34"
 
 
+def test_professional_import_source_uses_configured_figma_api(monkeypatch):
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Figma API UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1440, "height": 900},
+        },
+    ).json()
+    captured_request: dict[str, object] = {}
+
+    class FakeFigmaResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "nodes": {
+                    "12:34": {
+                        "document": {
+                            "id": "12:34",
+                            "name": "Shop HUD Frame",
+                            "type": "FRAME",
+                            "absoluteBoundingBox": {"x": 0, "y": 0, "width": 1440, "height": 900},
+                            "layoutMode": "VERTICAL",
+                            "itemSpacing": 16,
+                            "children": [
+                                {
+                                    "id": "12:35",
+                                    "name": "Reward Card",
+                                    "type": "COMPONENT",
+                                    "key": "reward-card-key",
+                                    "absoluteBoundingBox": {"x": 96, "y": 120, "width": 360, "height": 520},
+                                    "layoutMode": "HORIZONTAL",
+                                    "itemSpacing": 8,
+                                    "constraints": {"horizontal": "MIN", "vertical": "MIN"},
+                                },
+                                {
+                                    "id": "12:36",
+                                    "name": "Buy Label",
+                                    "type": "TEXT",
+                                    "characters": "BUY",
+                                    "absoluteBoundingBox": {"x": 220, "y": 680, "width": 120, "height": 42},
+                                    "style": {"fontFamily": "Inter", "fontSize": 32},
+                                },
+                            ],
+                        }
+                    }
+                }
+            }
+
+    def fake_figma_get(url: str, **kwargs):
+        captured_request["url"] = url
+        captured_request["headers"] = kwargs["headers"]
+        return FakeFigmaResponse()
+
+    monkeypatch.setenv("FIGMA_API_TOKEN", "figma-test-token")
+    monkeypatch.setattr("app.main.httpx.get", fake_figma_get)
+
+    response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "figma",
+            "figma_url": "https://www.figma.com/file/gameuiagent-shop/Shop-HUD",
+            "frame_id": "12:34",
+            "parser": "figma-api",
+        },
+    )
+
+    assert response.status_code == 201
+    imported = response.json()
+    assert captured_request["url"] == "https://api.figma.com/v1/files/gameuiagent-shop/nodes?ids=12%3A34"
+    assert captured_request["headers"] == {"X-Figma-Token": "figma-test-token"}
+    assert imported["parse_summary"]["layer_source"] == "figma-api"
+    assert imported["parse_summary"]["preserved_layers"] == 3
+    assert imported["parse_summary"]["warnings"] == []
+    frame = imported["design_document"]["layers"][0]
+    assert frame["id"] == "12:34"
+    assert frame["kind"] == "frame"
+    assert frame["auto_layout"] == {"direction": "vertical", "gap": 16}
+    card_node = imported["ir"]["nodes"][2]
+    assert card_node["component"]["key"] == "reward-card-key"
+    assert card_node["layout"]["constraints"] == {"horizontal": "MIN", "vertical": "MIN"}
+    text_node = imported["ir"]["nodes"][3]
+    assert text_node["text"]["content"] == "BUY"
+    assert text_node["text"]["style"] == {"font": "Inter", "font_size": 32}
+
+
 def test_professional_import_source_parses_uploaded_psd_binary_header(tmp_path):
     configure_persistent_store(str(tmp_path / "psd-parser.sqlite3"))
     configure_object_storage(str(tmp_path / "psd-objects"))

@@ -8,6 +8,7 @@ from os import getenv
 from re import sub
 from secrets import token_hex
 from typing import Any
+from urllib.parse import quote
 from uuid import uuid4
 from zlib import error as ZlibError, decompress
 
@@ -130,6 +131,7 @@ class ProfessionalLayer(BaseModel):
     text_style: dict[str, Any] | None = None
     component_key: str | None = None
     auto_layout: dict[str, Any] | None = None
+    constraints: dict[str, Any] | None = None
     opacity: float | None = None
     visible: bool | None = None
     is_group: bool | None = None
@@ -990,9 +992,9 @@ def create_professional_import_source(
         "parse_summary": {
             "parser": parsed_source["parser"],
             "preserved_layers": document["preserved_layers"],
+            "warnings": parsed_source.get("warnings", []),
             **({"binary_header": parsed_source["binary_header"]} if parsed_source.get("binary_header") else {}),
             **({"layer_source": parsed_source["layer_source"]} if parsed_source.get("layer_source") else {}),
-            **({"warnings": parsed_source["warnings"]} if parsed_source.get("warnings") else {}),
         },
         "ir": ir,
     }
@@ -2350,6 +2352,8 @@ def parse_professional_import_source(
     source_asset: dict[str, Any] | None,
 ) -> dict[str, Any]:
     if payload.source_type == "figma":
+        if getenv("FIGMA_API_TOKEN"):
+            return parse_figma_api_source(payload)
         return {
             "parser": payload.parser,
             "layers": mock_layers_for_import_source(project, payload.source_type),
@@ -2389,6 +2393,112 @@ def parse_professional_import_source(
             "warnings": ["Layer records are not present in the minimal header parse; composite canvas fallback created."],
         }
     raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported source type")
+
+
+def parse_figma_api_source(payload: ProfessionalImportSourceRequest) -> dict[str, Any]:
+    file_key = extract_figma_file_key(str(payload.figma_url))
+    frame_id = payload.frame_id
+    if not frame_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Figma frame ID required")
+    try:
+        response = httpx.get(
+            f"https://api.figma.com/v1/files/{file_key}/nodes?ids={quote(frame_id, safe='')}",
+            headers={"X-Figma-Token": str(getenv("FIGMA_API_TOKEN"))},
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload_json = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Figma API import failed") from exc
+    frame_node = ((payload_json.get("nodes") or {}).get(frame_id) or {}).get("document")
+    if not isinstance(frame_node, dict):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Figma frame not found")
+    return {
+        "parser": payload.parser,
+        "layer_source": "figma-api",
+        "layers": figma_node_to_layers(frame_node),
+        "warnings": [],
+    }
+
+
+def extract_figma_file_key(figma_url: str) -> str:
+    parts = [part for part in figma_url.split("/") if part]
+    for marker in ("file", "design"):
+        if marker in parts and parts.index(marker) + 1 < len(parts):
+            return parts[parts.index(marker) + 1]
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid Figma URL")
+
+
+def figma_node_to_layers(node: dict[str, Any], parent_id: str | None = None) -> list[ProfessionalLayer]:
+    layer = ProfessionalLayer(
+        id=str(node.get("id")),
+        name=str(node.get("name") or "Figma Layer"),
+        kind=figma_node_kind(node),
+        rect=figma_node_rect(node),
+        parent_id=parent_id,
+        text=node.get("characters") if isinstance(node.get("characters"), str) else None,
+        text_style=figma_text_style(node),
+        component_key=figma_component_key(node),
+        auto_layout=figma_auto_layout(node),
+        constraints=node.get("constraints") if isinstance(node.get("constraints"), dict) else None,
+        is_group=node.get("type") in {"FRAME", "GROUP", "SECTION"},
+    )
+    layers = [layer]
+    for child in node.get("children", []):
+        if isinstance(child, dict):
+            layers.extend(figma_node_to_layers(child, layer.id))
+    return layers
+
+
+def figma_node_kind(node: dict[str, Any]) -> str:
+    node_type = node.get("type")
+    if node_type == "TEXT":
+        return "text"
+    if node_type in {"COMPONENT", "INSTANCE"}:
+        return "component"
+    if node_type in {"FRAME", "GROUP", "SECTION"}:
+        return "frame"
+    return "image"
+
+
+def figma_node_rect(node: dict[str, Any]) -> dict[str, int]:
+    bounds = node.get("absoluteBoundingBox") if isinstance(node.get("absoluteBoundingBox"), dict) else {}
+    return {
+        "x": int(bounds.get("x", 0)),
+        "y": int(bounds.get("y", 0)),
+        "width": max(1, int(bounds.get("width", 1))),
+        "height": max(1, int(bounds.get("height", 1))),
+    }
+
+
+def figma_auto_layout(node: dict[str, Any]) -> dict[str, Any] | None:
+    layout_mode = node.get("layoutMode")
+    if layout_mode not in {"HORIZONTAL", "VERTICAL"}:
+        return None
+    return {
+        "direction": str(layout_mode).lower(),
+        "gap": int(node.get("itemSpacing", 0) or 0),
+    }
+
+
+def figma_component_key(node: dict[str, Any]) -> str | None:
+    for key in ("key", "componentId"):
+        value = node.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def figma_text_style(node: dict[str, Any]) -> dict[str, Any] | None:
+    style = node.get("style")
+    if not isinstance(style, dict):
+        return None
+    parsed: dict[str, Any] = {}
+    if isinstance(style.get("fontFamily"), str):
+        parsed["font"] = style["fontFamily"]
+    if isinstance(style.get("fontSize"), (int, float)):
+        parsed["font_size"] = style["fontSize"]
+    return parsed or None
 
 
 def stored_asset_path(source_asset: dict[str, Any]) -> Any:
@@ -2716,8 +2826,11 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             }
         if layer.get("component_key"):
             node["component"] = {"key": layer["component_key"]}
-        if layer.get("auto_layout"):
-            node["layout"] = {"auto_layout": layer["auto_layout"]}
+        if layer.get("auto_layout") or layer.get("constraints"):
+            node["layout"] = {
+                **({"auto_layout": layer["auto_layout"]} if layer.get("auto_layout") else {}),
+                **({"constraints": layer["constraints"]} if layer.get("constraints") else {}),
+            }
         if layer.get("opacity") is not None:
             node["opacity"] = layer["opacity"]
         if layer.get("visible") is not None:
