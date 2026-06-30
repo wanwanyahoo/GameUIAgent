@@ -53,6 +53,12 @@ export type PluginExportDownload = {
   checksum: string;
 };
 
+export type PluginExportArchive = {
+  exportId: string;
+  fileName: string;
+  content: ArrayBuffer;
+};
+
 type PluginProjectExportsDto = {
   exports: Array<{
     id: string;
@@ -191,6 +197,32 @@ export async function fetchPluginExportDownload(options: {
   };
 }
 
+export async function fetchPluginExportArchive(options: {
+  exportId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<PluginExportArchive> {
+  const fetcher = options.fetcher ?? fetch;
+  const response = await fetcher(
+    `/api/plugin/exports/${options.exportId}/download`,
+    {
+      headers: {
+        "Authorization": `Bearer ${options.token}`,
+        "Accept": "application/zip"
+      }
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Plugin export archive download failed: ${options.exportId}`);
+  }
+  const disposition = response.headers.get("content-disposition");
+  return {
+    exportId: options.exportId,
+    fileName: parseAttachmentFileName(disposition) ?? `${options.exportId}.zip`,
+    content: await response.arrayBuffer()
+  };
+}
+
 function mapPluginImportLog(dto: PluginImportLogDto): PluginImportLog {
   return {
     id: dto.id,
@@ -203,4 +235,10 @@ function mapPluginImportLog(dto: PluginImportLogDto): PluginImportLog {
     summary: dto.summary,
     logs: dto.logs
   };
+}
+
+function parseAttachmentFileName(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const match = disposition.match(/filename="([^"]+)"/);
+  return match?.[1] ?? null;
 }

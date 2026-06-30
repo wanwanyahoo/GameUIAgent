@@ -1,5 +1,7 @@
 from binascii import crc32
+from io import BytesIO
 from uuid import uuid4
+from zipfile import ZipFile
 from zlib import compress
 
 from fastapi.testclient import TestClient
@@ -3010,6 +3012,19 @@ def test_unity_plugin_manifest_download_and_import_log_flow():
     assert package["content_type"] == "application/zip"
     assert package["manifest"]["package_id"] == export_id
     assert "Assets/GameUIAgent/Prefabs/PluginHud.prefab" in package["files"]
+
+    zip_response = client.get(
+        f"/api/plugin/exports/{export_id}/download",
+        headers={**headers, "Accept": "application/zip"},
+    )
+    assert zip_response.status_code == 200
+    assert zip_response.headers["content-type"] == "application/zip"
+    assert zip_response.headers["content-disposition"] == f'attachment; filename="{export_id}.zip"'
+    with ZipFile(BytesIO(zip_response.content)) as archive:
+        names = archive.namelist()
+        assert "manifest.json" in names
+        assert "Assets/GameUIAgent/Prefabs/PluginHud.prefab" in names
+        assert export_id in archive.read("manifest.json").decode("utf-8")
 
     log_response = client.post(
         "/api/plugin/import-logs",

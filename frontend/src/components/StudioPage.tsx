@@ -5,9 +5,11 @@ import { navigateTo } from "../lib/hash-router";
 import { runGeneratedAssetAction, runStudioAction } from "../lib/studio-actions";
 import { collectGeneratedAssets } from "../lib/studio-generated-assets";
 import {
+  fetchPluginExportArchive,
   fetchPluginExportDownload,
   fetchPluginProjectExports,
   type PluginProjectExport,
+  type PluginExportArchive,
   type PluginExportDownload,
 } from "../lib/plugin-api";
 import {
@@ -45,6 +47,7 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [activeJobActionId, setActiveJobActionId] = useState<string | null>(null);
   const [exportsList, setExportsList] = useState<PluginProjectExport[]>([]);
   const [downloadPreview, setDownloadPreview] = useState<PluginExportDownload | null>(null);
+  const [downloadArchive, setDownloadArchive] = useState<PluginExportArchive | null>(null);
   const [activeExportId, setActiveExportId] = useState<string | null>(null);
   const [activeGeneratedActionId, setActiveGeneratedActionId] = useState<string | null>(null);
 
@@ -191,9 +194,13 @@ export function StudioPage({ projectId }: StudioPageProps) {
     try {
       setActiveExportId(exportId);
       setError(null);
-      const download = await fetchPluginExportDownload({ exportId, token });
+      const [download, archive] = await Promise.all([
+        fetchPluginExportDownload({ exportId, token }),
+        fetchPluginExportArchive({ exportId, token }),
+      ]);
       setDownloadPreview(download);
-      setActionMessage(`Export ${download.exportId} ready: ${download.files.length} files, ${download.checksum}`);
+      setDownloadArchive(archive);
+      setActionMessage(`Export ${download.exportId} ready: ${archive.fileName}, ${archive.content.byteLength} bytes`);
     } catch (err: any) {
       setError(err.message || "Failed to download export package");
     } finally {
@@ -367,6 +374,9 @@ export function StudioPage({ projectId }: StudioPageProps) {
               <div className="studio-download-preview">
                 <span>{downloadPreview.contentType}</span>
                 <b>{downloadPreview.manifest.entry.path}</b>
+                {downloadArchive && (
+                  <span>{downloadArchive.fileName} | {downloadArchive.content.byteLength} bytes</span>
+                )}
               </div>
             )}
           </div>

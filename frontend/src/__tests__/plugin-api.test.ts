@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { fetchPluginExportDownload, fetchPluginImportLogs, fetchPluginProjectExports } from "../lib/plugin-api";
+import { fetchPluginExportArchive, fetchPluginExportDownload, fetchPluginImportLogs, fetchPluginProjectExports } from "../lib/plugin-api";
 
 describe("plugin API client", () => {
   it("queries Unreal plugin exports with engine metadata", async () => {
@@ -119,6 +119,37 @@ describe("plugin API client", () => {
     assert.equal(download.contentType, "application/zip");
     assert.equal(download.manifest.engine, "unreal");
     assert.equal(download.files[0]?.path, "manifest.json");
+  });
+
+  it("downloads plugin export archives as binary zip payloads", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const zip = new Uint8Array([80, 75, 3, 4]).buffer;
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return {
+        ok: true,
+        headers: {
+          get: (name: string) => name.toLowerCase() === "content-disposition"
+            ? 'attachment; filename="exp_unreal.zip"'
+            : null,
+        },
+        arrayBuffer: async () => zip,
+      } as Response;
+    };
+
+    const archive = await fetchPluginExportArchive({
+      exportId: "exp_unreal",
+      token: "tok_1",
+      fetcher
+    });
+
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    assert.equal(calls[0]?.url, "/api/plugin/exports/exp_unreal/download");
+    assert.equal(headers.Authorization, "Bearer tok_1");
+    assert.equal(headers.Accept, "application/zip");
+    assert.equal(archive.exportId, "exp_unreal");
+    assert.equal(archive.fileName, "exp_unreal.zip");
+    assert.equal(new Uint8Array(archive.content)[0], 80);
   });
 });
 

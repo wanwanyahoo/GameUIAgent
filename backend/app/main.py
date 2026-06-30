@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import json
 import smtplib
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from hashlib import pbkdf2_hmac
 from hmac import compare_digest
+from io import BytesIO
 from os import getenv
 from re import sub
 from secrets import token_hex
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 from zlib import error as ZlibError, decompress
 
 import httpx
@@ -1449,9 +1452,15 @@ def plugin_export_manifest(export_id: str, user: dict[str, Any] = Depends(curren
     return export["package"]["manifest"]
 
 
-@app.get("/api/plugin/exports/{export_id}/download")
-def plugin_export_download(export_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+@app.get("/api/plugin/exports/{export_id}/download", response_model=None)
+def plugin_export_download(
+    export_id: str,
+    accept: str | None = Header(default=None),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any] | Response:
     export = require_export(export_id, user)
+    if accept and "application/zip" in accept:
+        return build_plugin_export_zip_response(export)
     return {
         "content_type": "application/zip",
         "export_id": export["id"],
@@ -1459,6 +1468,35 @@ def plugin_export_download(export_id: str, user: dict[str, Any] = Depends(curren
         "files": export["package"]["files"],
         "checksum": export["package"]["manifest"]["checksum"],
     }
+
+
+def build_plugin_export_zip_response(export: dict[str, Any]) -> Response:
+    buffer = BytesIO()
+    package = export["package"]
+    manifest = package["manifest"]
+    with ZipFile(buffer, mode="w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        for file_path in package["files"]:
+            archive.writestr(file_path, build_export_file_placeholder(export, file_path))
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{export["id"]}.zip"'},
+    )
+
+
+def build_export_file_placeholder(export: dict[str, Any], file_path: str) -> str:
+    manifest = export["package"]["manifest"]
+    return json.dumps(
+        {
+            "export_id": export["id"],
+            "engine": manifest["engine"],
+            "path": file_path,
+            "checksum": manifest["checksum"],
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
 
 @app.post("/api/plugin/import-logs", status_code=status.HTTP_201_CREATED)
