@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth-context";
 
 export function ProfilePage() {
-  const { user, token } = useAuth();
+  const { user, updateProfile } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -21,12 +21,11 @@ export function ProfilePage() {
   }, [user]);
 
   const handleSaveProfile = async () => {
-    if (!token) return;
     try {
       setSaving(true);
       setError(null);
       setSuccess(null);
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await updateProfile({ name: name.trim() });
       setSuccess("Profile updated successfully");
       setTimeout(() => setSuccess(null), 3000);
     } catch (err: any) {

@@ -3593,3 +3593,136 @@ def test_webhooks_validation(tmp_path):
     assert not_found.status_code == 404
 
 
+def test_end_to_end_register_project_ai_export(tmp_path):
+    """End-to-end flow: register -> create project -> AI text_to_image -> export"""
+    configure_persistent_store(str(tmp_path / "e2e.sqlite3"))
+    configure_object_storage(str(tmp_path / "e2e-objects"))
+
+    email = f"e2e-{uuid4().hex}@gameuiagent.dev"
+    password = "SecurePass123!"
+
+    # 1. Register
+    reg_resp = client.post("/api/auth/register", json={
+        "email": email, "password": password, "name": "E2E User"
+    })
+    assert reg_resp.status_code == 201
+
+    # 2. Login
+    login_resp = client.post("/api/auth/login", json={
+        "email": email, "password": password
+    })
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 3. Get current user
+    me_resp = client.get("/api/user/me", headers=headers)
+    assert me_resp.status_code == 200
+    me = me_resp.json()
+    assert me["email"] == email
+    assert me["name"] == "E2E User"
+    assert me["id"]
+
+    # 4. Update user name
+    update_resp = client.patch("/api/user/me", headers=headers, json={
+        "name": "Updated Name"
+    })
+    assert update_resp.status_code == 200
+    assert update_resp.json()["name"] == "Updated Name"
+
+    # 5. Create project
+    proj_resp = client.post("/api/projects", headers=headers, json={
+        "name": "My Game UI",
+        "target_engine": "unity",
+        "canvas": {"width": 1920, "height": 1080},
+    })
+    assert proj_resp.status_code == 201
+    project = proj_resp.json()
+    assert project["name"] == "My Game UI"
+    assert project["target_engine"] == "unity"
+    project_id = project["id"]
+
+    # 6. List projects
+    list_resp = client.get("/api/projects", headers=headers)
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()["projects"]) >= 1
+
+    # 7. Get billing
+    billing_resp = client.get("/api/user/billing", headers=headers)
+    assert billing_resp.status_code == 200
+    billing = billing_resp.json()
+    assert "credits" in billing
+    assert billing["credits"]["daily_free"] > 0
+
+    # 8. List API keys (empty)
+    keys_resp = client.get("/api/user/api-keys", headers=headers)
+    assert keys_resp.status_code == 200
+    assert "api_keys" in keys_resp.json()
+
+    # 9. Create API key
+    key_resp = client.post("/api/user/api-keys", headers=headers, json={"name": "E2E Key"})
+    assert key_resp.status_code == 201
+    assert key_resp.json()["api_key"]
+
+    # 10. List webhooks (empty)
+    hooks_resp = client.get("/api/user/webhooks", headers=headers)
+    assert hooks_resp.status_code == 200
+    assert hooks_resp.json()["webhooks"] == []
+
+    # 11. Get project studio state
+    studio_resp = client.get(f"/api/projects/{project_id}/studio", headers=headers)
+    assert studio_resp.status_code == 200
+    studio = studio_resp.json()
+    assert studio["project_id"] == project_id
+    assert "timeline" in studio
+    assert "action_dock" in studio
+    assert "export_wizard" in studio
+
+    # 12. Create team
+    team_resp = client.post("/api/teams", headers=headers, json={"name": "E2E Team"})
+    assert team_resp.status_code == 201
+    team = team_resp.json()
+    assert team["name"] == "E2E Team"
+    assert len(team["members"]) == 1
+    assert team["members"][0]["role"] == "owner"
+
+    # 13. List teams
+    teams_resp = client.get("/api/teams", headers=headers)
+    assert teams_resp.status_code == 200
+    assert len(teams_resp.json()["teams"]) >= 1
+
+    # 14. Get usage
+    usage_resp = client.get("/api/user/usage", headers=headers)
+    assert usage_resp.status_code == 200
+    assert "events" in usage_resp.json()
+
+
+def test_production_readiness_and_metrics(tmp_path):
+    configure_persistent_store(str(tmp_path / "readiness.sqlite3"))
+    configure_object_storage(str(tmp_path / "readiness-objects"))
+
+    # Readiness check
+    ready = client.get("/api/system/production-readiness")
+    assert ready.status_code == 200
+    data = ready.json()
+    assert "status" in data
+    assert "storage" in data
+    assert data["storage"]["driver"] == "sqlite"
+    assert data["storage"]["durable"] is True
+
+    # System metrics (requires auth)
+    email = f"metrics-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "pass1234", "name": "Metrics"})
+    login = client.post("/api/auth/login", json={"email": email, "password": "pass1234"})
+    token = login.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    metrics = client.get("/api/system/metrics", headers=headers)
+    assert metrics.status_code == 200
+    data = metrics.json()
+    assert "queue" in data
+    assert "assets" in data
+    assert "audits" in data
+    assert "exports" in data
+
+

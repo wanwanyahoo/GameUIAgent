@@ -9,6 +9,8 @@ import {
   loginApi,
   registerApi,
   setAuthSession,
+  getCurrentUserApi,
+  updateUserApi,
 } from "./auth-api";
 
 export type AuthState = {
@@ -23,6 +25,7 @@ export type AuthContextValue = AuthState & {
   register: (data: RegisterData) => Promise<void>;
   logout: () => void;
   clearError: () => void;
+  updateProfile: (data: { name?: string }) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -37,20 +40,29 @@ export function AuthProvider({ children, baseUrl }: { children: ReactNode; baseU
 
   useEffect(() => {
     const token = getStoredToken();
-    const user = getStoredUser();
-    setState({
-      user,
-      token,
-      isLoading: false,
-      error: null,
-    });
-  }, []);
+    const storedUser = getStoredUser();
+    if (token && storedUser?.id) {
+      setState({ user: storedUser, token, isLoading: false, error: null });
+    } else if (token) {
+      getCurrentUserApi(token, { baseUrl })
+        .then((user) => {
+          setAuthSession(token, user);
+          setState({ user, token, isLoading: false, error: null });
+        })
+        .catch(() => {
+          clearAuthSession();
+          setState({ user: null, token: null, isLoading: false, error: null });
+        });
+    } else {
+      setState({ user: null, token: null, isLoading: false, error: null });
+    }
+  }, [baseUrl]);
 
   const login = useCallback(async (data: LoginData) => {
     setState((s) => ({ ...s, isLoading: true, error: null }));
     try {
       const result = await loginApi(data, { baseUrl });
-      const user: AuthUser = { id: "", email: data.email, name: data.email };
+      const user = await getCurrentUserApi(result.accessToken, { baseUrl });
       setAuthSession(result.accessToken, user);
       setState({ user, token: result.accessToken, isLoading: false, error: null });
     } catch (err) {
@@ -63,8 +75,9 @@ export function AuthProvider({ children, baseUrl }: { children: ReactNode; baseU
   const register = useCallback(async (data: RegisterData) => {
     setState((s) => ({ ...s, isLoading: true, error: null }));
     try {
-      const user = await registerApi(data, { baseUrl });
+      await registerApi(data, { baseUrl });
       const loginResult = await loginApi({ email: data.email, password: data.password }, { baseUrl });
+      const user = await getCurrentUserApi(loginResult.accessToken, { baseUrl });
       setAuthSession(loginResult.accessToken, user);
       setState({ user, token: loginResult.accessToken, isLoading: false, error: null });
     } catch (err) {
@@ -83,12 +96,27 @@ export function AuthProvider({ children, baseUrl }: { children: ReactNode; baseU
     setState((s) => ({ ...s, error: null }));
   }, []);
 
+  const updateProfile = useCallback(async (data: { name?: string }) => {
+    if (!state.token) throw new Error("Not authenticated");
+    setState((s) => ({ ...s, error: null }));
+    try {
+      const updated = await updateUserApi(state.token, data, { baseUrl });
+      setAuthSession(state.token!, updated);
+      setState((s) => ({ ...s, user: updated }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Update failed";
+      setState((s) => ({ ...s, error: message }));
+      throw err;
+    }
+  }, [state.token, baseUrl]);
+
   const value: AuthContextValue = {
     ...state,
     login,
     register,
     logout,
     clearError,
+    updateProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

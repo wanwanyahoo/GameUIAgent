@@ -126,6 +126,41 @@ export async function confirmPasswordResetApi(
   return response.json();
 }
 
+export async function getCurrentUserApi(token: string, options: AuthApiOptions = {}): Promise<AuthUser> {
+  const fetcher = options.fetcher || defaultFetcher;
+  const baseUrl = options.baseUrl || "";
+  const response = await fetcher(`${baseUrl}/api/user/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    const detail = await parseErrorDetail(response);
+    throw new AuthError(response.status, detail || "Failed to get user");
+  }
+  return response.json();
+}
+
+export async function updateUserApi(
+  token: string,
+  data: { name?: string },
+  options: AuthApiOptions = {}
+): Promise<AuthUser> {
+  const fetcher = options.fetcher || defaultFetcher;
+  const baseUrl = options.baseUrl || "";
+  const response = await fetcher(`${baseUrl}/api/user/me`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    const detail = await parseErrorDetail(response);
+    throw new AuthError(response.status, detail || "Failed to update user");
+  }
+  return response.json();
+}
+
 async function parseErrorDetail(response: Response): Promise<string | null> {
   try {
     const body = await response.json();

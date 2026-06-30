@@ -1469,6 +1469,33 @@ def revoke_api_key(key_id: str, user: dict[str, Any] = Depends(current_user)) ->
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
 
 
+@app.get("/api/user/me")
+def get_current_user(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "name": user.get("name", ""),
+        "created_at": user.get("created_at"),
+    }
+
+
+class UserUpdateRequest(BaseModel):
+    name: str | None = None
+
+
+@app.patch("/api/user/me")
+def update_current_user(payload: UserUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if payload.name is not None:
+        user["name"] = payload.name.strip()
+        store.flush()
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "name": user.get("name", ""),
+        "created_at": user.get("created_at"),
+    }
+
+
 @app.get("/api/user/billing")
 def get_billing(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     account = billing_account_for(user)
