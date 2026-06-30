@@ -94,6 +94,23 @@ const assetLibraryOperations = [
     detail: "Duplicate approved assets for variants, or remove obsolete uploads from the active project library."
   }
 ] as const;
+const productionRuntimeChecks = [
+  {
+    title: "SQLite durable store",
+    endpoint: "/api/system/production-readiness",
+    detail: "Users, projects and assets persist to a SQLite runtime database and reload after process restart."
+  },
+  {
+    title: "No in-memory-only data loss",
+    endpoint: "GAMEUIAGENT_STORE_DB",
+    detail: "Production deployments set a database path instead of relying on ephemeral process memory."
+  },
+  {
+    title: "Readiness checks",
+    endpoint: "durable_store / salted_password_hashes / ownership_guards",
+    detail: "Runtime checks expose storage durability, password hashing and project ownership safeguards."
+  }
+] as const;
 
 export function App() {
   return (
@@ -361,6 +378,23 @@ export function App() {
               <h3>{operation.title}</h3>
               <code>{operation.endpoint}</code>
               <p>{operation.detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="section" id="production-runtime">
+        <div className="section-heading">
+          <p className="eyebrow">Production Runtime</p>
+          <h2>Core platform state now has a durable runtime store instead of in-memory-only data.</h2>
+        </div>
+        <div className="runtime-grid">
+          {productionRuntimeChecks.map((check, index) => (
+            <article className="runtime-card" key={check.title}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{check.title}</h3>
+              <code>{check.endpoint}</code>
+              <p>{check.detail}</p>
             </article>
           ))}
         </div>

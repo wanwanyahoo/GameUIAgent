@@ -2,7 +2,8 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app, store
+from app.main import app, configure_persistent_store, store
+from app.persistence import create_production_store
 
 
 client = TestClient(app)
@@ -60,6 +61,102 @@ def test_auth_stores_salted_password_hashes():
     assert stored_hash.startswith("pbkdf2_sha256$")
     assert password not in stored_hash
     assert len(stored_hash.split("$")) == 4
+
+
+def test_sqlite_store_persists_users_projects_and_assets_across_reload(tmp_path):
+    db_path = tmp_path / "gameuiagent.sqlite3"
+    configure_persistent_store(str(db_path))
+    email = f"persist-{uuid4().hex}@gameuiagent.dev"
+    password = "secret-pass"
+
+    register_response = client.post(
+        "/api/auth/register",
+        json={"email": email, "password": password, "name": "Persistent User"},
+    )
+    login_response = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+    )
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+    project_response = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Persistent Production Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    )
+    project = project_response.json()
+    asset_response = client.post(
+        f"/api/projects/{project['id']}/assets",
+        headers=headers,
+        json={
+            "name": "persistent-hud.png",
+            "type": "original_upload",
+            "url": "s3://gameuiagent-production/persistent-hud.png",
+            "width": 1920,
+            "height": 1080,
+            "usage": "source_ui",
+            "tags": ["production"],
+        },
+    )
+    asset = asset_response.json()
+
+    reloaded_store = create_production_store()
+    reloaded_store.configure(str(db_path))
+
+    assert register_response.status_code == 201
+    assert project_response.status_code == 201
+    assert asset_response.status_code == 201
+    assert db_path.exists()
+    assert reloaded_store["users"][email]["name"] == "Persistent User"
+    assert reloaded_store["projects"][project["id"]]["name"] == "Persistent Production Project"
+    assert reloaded_store["assets"][asset["id"]]["url"].startswith("s3://gameuiagent-production/")
+
+
+def test_production_readiness_reports_durable_sqlite_store(tmp_path):
+    db_path = tmp_path / "readiness.sqlite3"
+    configure_persistent_store(str(db_path))
+
+    response = client.get("/api/system/production-readiness")
+
+    assert response.status_code == 200
+    readiness = response.json()
+    assert readiness["status"] == "production_foundation_ready"
+    assert readiness["storage"]["driver"] == "sqlite"
+    assert readiness["storage"]["durable"] is True
+    assert readiness["storage"]["ephemeral"] is False
+    assert "durable_store" in readiness["checks"]
+
+
+def test_sqlite_store_persists_nested_password_hash_updates(tmp_path):
+    db_path = tmp_path / "nested-update.sqlite3"
+    configure_persistent_store(str(db_path))
+    email = f"nested-{uuid4().hex}@gameuiagent.dev"
+    old_password = "old-secret"
+    new_password = "new-secret"
+    client.post(
+        "/api/auth/register",
+        json={"email": email, "password": old_password, "name": "Nested Update User"},
+    )
+    client.post("/api/auth/password-reset/request", json={"email": email})
+    reset_token = next(
+        token
+        for token, reset in store["password_reset_tokens"].items()
+        if reset["email"] == email
+    )
+
+    confirm_response = client.post(
+        "/api/auth/password-reset/confirm",
+        json={"token": reset_token, "new_password": new_password},
+    )
+    reloaded_store = create_production_store()
+    reloaded_store.configure(str(db_path))
+
+    assert confirm_response.status_code == 200
+    assert reloaded_store["users"][email]["password_hash"] == store["users"][email]["password_hash"]
+    assert old_password not in reloaded_store["users"][email]["password_hash"]
 
 
 def test_password_reset_rotates_password_and_consumes_token():

@@ -497,7 +497,8 @@ a {
 .plan-table,
 .account-grid,
 .upload-chain,
-.asset-ops {
+.asset-ops,
+.runtime-grid {
   display: grid;
   gap: 1rem;
 }
@@ -540,7 +541,8 @@ a {
 .plan-card,
 .account-card,
 .upload-step,
-.asset-op-card {
+.asset-op-card,
+.runtime-card {
   min-height: 220px;
   padding: 1rem;
   border-radius: 1.2rem;
@@ -557,7 +559,8 @@ a {
 .plan-card span,
 .account-card span,
 .upload-step span,
-.asset-op-card span {
+.asset-op-card span,
+.runtime-card span {
   color: #7cf8ff;
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.74rem;
@@ -575,7 +578,8 @@ a {
 .plan-card h3,
 .account-card h3,
 .upload-step h3,
-.asset-op-card h3 {
+.asset-op-card h3,
+.runtime-card h3 {
   margin: 1rem 0 0.7rem;
 }
 
@@ -589,7 +593,8 @@ a {
 .plan-card p,
 .account-card p,
 .upload-step p,
-.asset-op-card p {
+.asset-op-card p,
+.runtime-card p {
   color: rgba(232, 247, 255, 0.68);
   line-height: 1.6;
 }
@@ -614,6 +619,10 @@ a {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.runtime-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .account-card {
   border: 1px solid rgba(215, 255, 102, 0.2);
   background:
@@ -635,8 +644,16 @@ a {
     linear-gradient(145deg, rgba(18, 24, 18, 0.86), rgba(5, 8, 14, 0.9));
 }
 
+.runtime-card {
+  border: 1px solid rgba(124, 248, 255, 0.2);
+  background:
+    radial-gradient(circle at 25% 15%, rgba(124, 248, 255, 0.13), transparent 12rem),
+    linear-gradient(145deg, rgba(10, 24, 32, 0.9), rgba(5, 8, 14, 0.9));
+}
+
 .upload-step code,
-.asset-op-card code {
+.asset-op-card code,
+.runtime-card code {
   display: block;
   color: #d7ff66;
   font-family: "IBM Plex Mono", monospace;

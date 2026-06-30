@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hashlib import pbkdf2_hmac
 from hmac import compare_digest
+from os import getenv
 from re import sub
 from secrets import token_hex
 from typing import Any
@@ -9,6 +10,8 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
+
+from app.persistence import ProductionStore, create_production_store
 
 
 app = FastAPI(title="GameUIAgent API", version="0.1.0")
@@ -168,29 +171,16 @@ class PluginAuthRequest(BaseModel):
     device_name: str
 
 
-store: dict[str, Any] = {
-    "users": {},
-    "tokens": {},
-    "projects": {},
-    "assets": {},
-    "jobs": {},
-    "irs": {},
-    "exports": {},
-    "snapshots": {},
-    "imports": {},
-    "api_keys": {},
-    "developer_tasks": {},
-    "import_logs": {},
-    "plugin_devices": {},
-    "billing_accounts": {},
-    "usage_events": {},
-    "rate_limits": {},
-    "studio_states": {},
-    "teams": {},
-    "memberships": {},
-    "password_reset_tokens": {},
-    "asset_versions": {},
-}
+store: ProductionStore = create_production_store()
+
+
+def configure_persistent_store(db_path: str) -> None:
+    store.configure(db_path)
+
+
+production_store_path = getenv("GAMEUIAGENT_STORE_DB")
+if production_store_path:
+    configure_persistent_store(production_store_path)
 
 
 def make_id(prefix: str) -> str:
@@ -237,6 +227,26 @@ def current_api_user(x_api_key: str = Header(default="", alias="X-API-Key")) -> 
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/system/production-readiness")
+def production_readiness() -> dict[str, Any]:
+    durable = store.db_path is not None
+    return {
+        "status": "production_foundation_ready" if durable else "ephemeral_demo_mode",
+        "storage": {
+            "driver": "sqlite" if durable else "memory",
+            "durable": durable,
+            "ephemeral": not durable,
+            "path": store.db_path,
+        },
+        "checks": [
+            "durable_store" if durable else "ephemeral_store",
+            "salted_password_hashes",
+            "project_ownership_guards",
+            "engine_manifest_contracts",
+        ],
+    }
 
 
 @app.get("/api/marketing/capabilities")
@@ -311,6 +321,7 @@ def confirm_password_reset(payload: PasswordResetConfirmRequest) -> dict[str, st
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     user["password_hash"] = hash_password(payload.new_password)
+    store.flush()
     return {"status": "password_reset"}
 
 
@@ -360,6 +371,7 @@ def update_team_member_role(
     if not membership or membership["team_id"] != team_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Membership not found")
     membership["role"] = payload.role
+    store.flush()
     return membership
 
 
@@ -454,6 +466,7 @@ def update_project_asset(
     if payload.tags is not None:
         asset.setdefault("metadata", {})["tags"] = payload.tags
     record_asset_version(asset, "updated")
+    store.flush()
     return asset
 
 
@@ -708,6 +721,7 @@ def apply_studio_correction(
     studio["active_selection"]["selected_layer_id"] = correction["target_layer_id"]
     updated_node = apply_correction_to_latest_ir(project, correction)
     studio["timeline"] = build_studio_timeline(project)
+    store.flush()
     return {
         "status": "applied",
         "correction": correction,
@@ -745,6 +759,7 @@ def preview_studio_export_wizard(
         elif step["id"] == "sync-plugin":
             step["status"] = "active"
     studio["timeline"] = build_studio_timeline(project)
+    store.flush()
     return {
         "project_id": project["id"],
         "studio": studio,
@@ -880,6 +895,7 @@ def plugin_import_log(
     }
     store["import_logs"][log["id"]] = log
     export["last_import_log_id"] = log["id"]
+    store.flush()
     return log
 
 
@@ -977,6 +993,7 @@ def execute_super_matting(
     store["developer_tasks"][task["task_id"]] = task
     usage["task_id"] = task["task_id"]
     store["usage_events"][usage["id"]] = usage
+    store.flush()
     return task
 
 
@@ -992,6 +1009,7 @@ def cancel_ai_task(task_id: str, user: dict[str, Any] = Depends(current_api_user
     if task["status"] not in {"succeeded", "failed"}:
         task["status"] = "cancelled"
         task["progress"] = 0
+        store.flush()
     return task
 
 

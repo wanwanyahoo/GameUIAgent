@@ -169,4 +169,13 @@ describe("App", () => {
     assert.match(html, /Copy and delete/);
     assert.match(html, /\/assets\/\{asset_id\}\/versions/);
   });
+
+  it("renders the production runtime foundation", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Production Runtime/);
+    assert.match(html, /SQLite durable store/);
+    assert.match(html, /\/api\/system\/production-readiness/);
+    assert.match(html, /No in-memory-only data loss/);
+  });
 });
