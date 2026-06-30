@@ -85,6 +85,7 @@ class AiJobRequest(BaseModel):
     seed: int | None = None
     model: str | None = None
     count: int = Field(default=1, ge=1)
+    execution_mode: str = "inline"
 
 
 class SegmentationRequest(BaseModel):
@@ -175,6 +176,7 @@ class PluginAuthRequest(BaseModel):
 
 store: ProductionStore = create_production_store()
 object_storage: LocalObjectStorage = create_object_storage()
+worker_token: str | None = getenv("GAMEUIAGENT_WORKER_TOKEN")
 
 
 def configure_persistent_store(db_path: str) -> None:
@@ -183,6 +185,11 @@ def configure_persistent_store(db_path: str) -> None:
 
 def configure_object_storage(root_path: str) -> None:
     object_storage.configure(root_path)
+
+
+def configure_worker_token(token: str | None) -> None:
+    global worker_token
+    worker_token = token
 
 
 production_store_path = getenv("GAMEUIAGENT_STORE_DB")
@@ -235,6 +242,12 @@ def current_api_user(x_api_key: str = Header(default="", alias="X-API-Key")) -> 
     return api_key["user"]
 
 
+def require_worker_token(x_worker_token: str = Header(default="", alias="X-Worker-Token")) -> bool:
+    if worker_token and not compare_digest(x_worker_token, worker_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid worker token")
+    return True
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -261,6 +274,8 @@ def production_readiness() -> dict[str, Any]:
         "checks": [
             "durable_store" if durable else "ephemeral_store",
             "object_storage" if object_durable else "missing_object_storage",
+            "ai_job_queue",
+            "worker_auth" if worker_token else "missing_worker_auth",
             "salted_password_hashes",
             "project_ownership_guards",
             "engine_manifest_contracts",
@@ -614,26 +629,10 @@ def create_ai_job(
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     project = require_project(project_id, user)
+    validate_ai_execution_mode(payload.execution_mode)
     input_asset = require_optional_project_asset(project, payload.input_asset_id)
     reference_asset = require_optional_project_asset(project, payload.reference_asset_id)
     mask_asset = require_optional_project_asset(project, payload.mask_asset_id)
-    asset = {
-        "id": make_id("ast"),
-        "project_id": project["id"],
-        "type": "generated_image",
-        "name": f"{project['name']} generated concept",
-        "prompt": payload.prompt,
-        "url": f"/generated/{project['id']}/{payload.kind}.png",
-        "size": payload.size,
-        "source": "ai",
-        "metadata": {
-            "width": project["canvas"]["width"],
-            "height": project["canvas"]["height"],
-            "usage": payload.kind,
-            "input_asset_id": input_asset["id"] if input_asset else None,
-        },
-    }
-    store["assets"][asset["id"]] = asset
     estimated_credits = estimate_ai_job_credits(payload)
     job = {
         "id": make_id("job"),
@@ -652,16 +651,52 @@ def create_ai_job(
             "size": payload.size,
         },
         "estimated_credits": estimated_credits,
-        "candidates": [
-            {"asset_id": asset["id"], "rank": index + 1, "score": round(0.94 - index * 0.03, 2)}
-            for index in range(payload.count)
-        ],
-        "status": "succeeded",
-        "progress": 100,
-        "result_asset": asset,
+        "execution_mode": payload.execution_mode,
+        "status": "queued" if payload.execution_mode == "queued" else "running",
+        "progress": 0 if payload.execution_mode == "queued" else 50,
     }
+    if payload.execution_mode == "queued":
+        queue_item = {
+            "id": make_id("aiq"),
+            "job_id": job["id"],
+            "project_id": project["id"],
+            "status": "queued",
+            "attempts": 0,
+            "worker": "gameuiagent-local-worker",
+            "model": payload.model or "game-ui-default",
+        }
+        job["queue"] = queue_item
+        store["ai_job_queue"][queue_item["id"]] = queue_item
+    else:
+        complete_ai_job(project, job)
     store["jobs"][job["id"]] = job
     return job
+
+
+@app.post("/api/system/ai-worker/run-next")
+def run_next_ai_worker_job(_worker_authorized: bool = Depends(require_worker_token)) -> dict[str, Any]:
+    queue_item = next(
+        (item for item in store["ai_job_queue"].values() if item["status"] == "queued"),
+        None,
+    )
+    if not queue_item:
+        return {"status": "idle", "job": None}
+    job = store["jobs"].get(queue_item["job_id"])
+    project = store["projects"].get(queue_item["project_id"])
+    if not job or not project:
+        queue_item["status"] = "failed"
+        queue_item["error"] = "Queued job lost its project or job record"
+        store.flush()
+        return {"status": "failed", "job": None, "queue": queue_item}
+    queue_item["status"] = "running"
+    queue_item["attempts"] += 1
+    job["status"] = "running"
+    job["progress"] = 50
+    complete_ai_job(project, job)
+    queue_item["status"] = "succeeded"
+    job["queue"] = queue_item
+    store.flush()
+    return {"status": "processed", "job": job, "queue": queue_item}
 
 
 @app.post("/api/projects/{project_id}/segmentations", status_code=status.HTTP_201_CREATED)
@@ -1486,6 +1521,41 @@ def estimate_ai_job_credits(payload: AiJobRequest) -> int:
         "upscale": 2,
     }
     return base_costs.get(payload.kind, 2) * max(payload.count, 1)
+
+
+def validate_ai_execution_mode(execution_mode: str) -> None:
+    if execution_mode not in {"inline", "queued"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported AI execution mode")
+
+
+def complete_ai_job(project: dict[str, Any], job: dict[str, Any]) -> None:
+    input_asset = job.get("input_asset")
+    asset = {
+        "id": make_id("ast"),
+        "project_id": project["id"],
+        "type": "generated_image",
+        "name": f"{project['name']} generated concept",
+        "prompt": job["prompt"],
+        "url": f"/generated/{project['id']}/{job['kind']}.png",
+        "size": job["parameters"]["size"],
+        "source": "ai",
+        "metadata": {
+            "width": project["canvas"]["width"],
+            "height": project["canvas"]["height"],
+            "usage": job["kind"],
+            "input_asset_id": input_asset["id"] if input_asset else None,
+            "model": job["parameters"].get("model"),
+            "execution_mode": job["execution_mode"],
+        },
+    }
+    store["assets"][asset["id"]] = asset
+    job["candidates"] = [
+        {"asset_id": asset["id"], "rank": index + 1, "score": round(0.94 - index * 0.03, 2)}
+        for index in range(job["parameters"]["count"])
+    ]
+    job["status"] = "succeeded"
+    job["progress"] = 100
+    job["result_asset"] = asset
 
 
 def build_segmentation_slices(project: dict[str, Any], asset: dict[str, Any]) -> list[dict[str, Any]]:

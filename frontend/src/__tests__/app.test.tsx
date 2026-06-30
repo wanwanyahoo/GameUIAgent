@@ -178,6 +178,11 @@ describe("App", () => {
     assert.match(html, /Local object storage/);
     assert.match(html, /GAMEUIAGENT_OBJECT_STORE_DIR/);
     assert.match(html, /Binary upload and download/);
+    assert.match(html, /AI worker queue/);
+    assert.match(html, /\/api\/system\/ai-worker\/run-next/);
+    assert.match(html, /GAMEUIAGENT_WORKER_TOKEN/);
+    assert.match(html, /X-Worker-Token/);
+    assert.match(html, /queued -&gt; running -&gt; succeeded/);
     assert.match(html, /\/api\/system\/production-readiness/);
     assert.match(html, /No in-memory-only data loss/);
   });

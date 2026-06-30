@@ -111,9 +111,14 @@ const productionRuntimeChecks = [
     detail: "Binary upload and download endpoints persist original files with size, content type and SHA-256 metadata."
   },
   {
+    title: "AI worker queue",
+    endpoint: "GAMEUIAGENT_WORKER_TOKEN / X-Worker-Token",
+    detail: "Queued AI jobs call /api/system/ai-worker/run-next with worker auth and move through queued -> running -> succeeded."
+  },
+  {
     title: "Readiness checks",
-    endpoint: "durable_store / object_storage / ownership_guards",
-    detail: "Runtime checks expose storage durability, object storage, password hashing and project ownership safeguards."
+    endpoint: "durable_store / object_storage / ai_job_queue",
+    detail: "Runtime checks expose storage durability, object storage, queued AI processing and ownership safeguards."
   }
 ] as const;
 

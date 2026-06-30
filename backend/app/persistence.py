@@ -12,6 +12,7 @@ STORE_SECTIONS = [
     "projects",
     "assets",
     "jobs",
+    "ai_job_queue",
     "irs",
     "exports",
     "snapshots",

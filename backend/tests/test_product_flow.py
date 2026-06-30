@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app, configure_object_storage, configure_persistent_store, store
+from app.main import app, configure_object_storage, configure_persistent_store, configure_worker_token, store
 from app.persistence import create_production_store
 
 
@@ -429,6 +429,78 @@ def test_uploaded_asset_drives_image_to_image_segmentation_and_unity_export():
 
     assert export_response.status_code == 201
     assert export_response.json()["package"]["manifest"]["asset_ir"]["node_count"] >= 4
+
+
+def test_queued_ai_job_persists_and_worker_completes_result_asset(tmp_path):
+    db_path = tmp_path / "queued-ai.sqlite3"
+    configure_persistent_store(str(db_path))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Queued AI Production Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+
+    job_response = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "text_to_image",
+            "prompt": "production worker generated RPG HUD",
+            "model": "game-ui-xl",
+            "count": 2,
+            "execution_mode": "queued",
+        },
+    )
+
+    assert job_response.status_code == 201
+    job = job_response.json()
+    assert job["status"] == "queued"
+    assert job["progress"] == 0
+    assert job["queue"]["status"] == "queued"
+    assert "result_asset" not in job
+
+    reloaded_store = create_production_store()
+    reloaded_store.configure(str(db_path))
+    assert reloaded_store["jobs"][job["id"]]["status"] == "queued"
+    assert reloaded_store["ai_job_queue"][job["queue"]["id"]]["job_id"] == job["id"]
+
+    worker_response = client.post("/api/system/ai-worker/run-next")
+
+    assert worker_response.status_code == 200
+    completed = worker_response.json()["job"]
+    assert completed["id"] == job["id"]
+    assert completed["status"] == "succeeded"
+    assert completed["progress"] == 100
+    assert completed["result_asset"]["source"] == "ai"
+    assert completed["candidates"][0]["asset_id"] == completed["result_asset"]["id"]
+
+    completed_reload = create_production_store()
+    completed_reload.configure(str(db_path))
+    assert completed_reload["jobs"][job["id"]]["status"] == "succeeded"
+    assert completed_reload["ai_job_queue"][job["queue"]["id"]]["status"] == "succeeded"
+
+
+def test_ai_worker_endpoint_requires_configured_worker_token(tmp_path):
+    configure_persistent_store(str(tmp_path / "worker-auth.sqlite3"))
+    configure_worker_token("worker-secret")
+    try:
+        unauthorized_response = client.post("/api/system/ai-worker/run-next")
+        authorized_response = client.post(
+            "/api/system/ai-worker/run-next",
+            headers={"X-Worker-Token": "worker-secret"},
+        )
+        readiness_response = client.get("/api/system/production-readiness")
+
+        assert unauthorized_response.status_code == 401
+        assert authorized_response.status_code == 200
+        assert "worker_auth" in readiness_response.json()["checks"]
+    finally:
+        configure_worker_token(None)
 
 
 def test_professional_import_source_submission_creates_parser_job():
