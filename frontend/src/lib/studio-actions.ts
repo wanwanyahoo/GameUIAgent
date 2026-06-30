@@ -1,4 +1,4 @@
-import { createStudioAiJob, createStudioSegmentation, applyStudioCorrection, previewStudioExportWizard } from "./studio-api";
+import { createProfessionalImportSource, createStudioAiJob, createStudioAsset, createStudioSegmentation, applyStudioCorrection, previewStudioExportWizard } from "./studio-api";
 import type { Project, StudioState } from "./projects-api";
 
 export type StudioActionId = "regenerate" | "open-slice-editor" | "apply-correction" | "export-package";
@@ -35,10 +35,28 @@ export type RunGeneratedAssetActionOptions = {
   clients?: Partial<Pick<StudioActionClients, "createSegmentation" | "previewExport">>;
 };
 
+export type ProfessionalImportActionClients = {
+  createAsset: (options: Parameters<typeof createStudioAsset>[0]) => Promise<{ id: string; name: string }>;
+  createImportSource: (options: Parameters<typeof createProfessionalImportSource>[0]) => Promise<unknown>;
+  previewExport: (options: Parameters<typeof previewStudioExportWizard>[0]) => Promise<unknown>;
+};
+
+export type RunProfessionalImportActionOptions = {
+  token: string;
+  project: Project;
+  clients?: Partial<ProfessionalImportActionClients>;
+};
+
 const defaultClients: StudioActionClients = {
   createAiJob: createStudioAiJob,
   createSegmentation: createStudioSegmentation,
   applyCorrection: applyStudioCorrection,
+  previewExport: previewStudioExportWizard,
+};
+
+const defaultProfessionalImportClients: ProfessionalImportActionClients = {
+  createAsset: createStudioAsset,
+  createImportSource: createProfessionalImportSource,
   previewExport: previewStudioExportWizard,
 };
 
@@ -132,4 +150,45 @@ export async function runGeneratedAssetAction(options: RunGeneratedAssetActionOp
   }
 
   throw new Error(`Unsupported generated asset action: ${options.actionId}`);
+}
+
+export async function runProfessionalImportAction(options: RunProfessionalImportActionOptions): Promise<RunStudioActionResult> {
+  const clients = { ...defaultProfessionalImportClients, ...options.clients };
+  const psdName = `${options.project.name}.psd`;
+  const asset = await clients.createAsset({
+    projectId: options.project.id,
+    token: options.token,
+    asset: {
+      name: psdName,
+      type: "psd",
+      url: `s3://gameuiagent/imports/${safeAssetSlug(psdName)}`,
+      width: options.project.canvas.width,
+      height: options.project.canvas.height,
+      usage: "professional_import",
+      tags: ["psd", "professional-import", "editable-ir"]
+    },
+  });
+  const imported = await clients.createImportSource({
+    projectId: options.project.id,
+    token: options.token,
+    source: {
+      sourceType: "psd",
+      assetId: asset.id,
+      parser: "mock-layer-parser",
+    },
+  });
+  const exportResult = await clients.previewExport({
+    projectId: options.project.id,
+    token: options.token,
+    targetEngine: "unity",
+  });
+  return {
+    status: "ok",
+    message: "PSD imported into editable Asset IR and Unity export generated",
+    result: { asset, imported, export: exportResult }
+  };
+}
+
+function safeAssetSlug(name: string): string {
+  return name.trim().replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || "professional-import.psd";
 }

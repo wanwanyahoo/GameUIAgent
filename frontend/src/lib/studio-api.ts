@@ -94,6 +94,29 @@ export type StudioSegmentation = {
   }>;
 };
 
+export type ProfessionalImportSource = {
+  id: string;
+  projectId: string;
+  status: string;
+  source: {
+    sourceType: string;
+    assetId?: string | null;
+    figmaUrl?: string | null;
+    frameId?: string | null;
+    parser: string;
+  };
+  parseSummary: {
+    parser: string;
+    preservedLayers: number;
+    warnings: string[];
+  };
+  ir: {
+    id: string;
+    projectId: string;
+    professionalSource?: Record<string, unknown>;
+  };
+};
+
 type StudioStateDto = {
   project_id: string;
   active_selection: {
@@ -167,6 +190,29 @@ type StudioSegmentationDto = {
   }>;
 };
 
+type ProfessionalImportSourceDto = {
+  id: string;
+  project_id: string;
+  status: string;
+  source: {
+    source_type: string;
+    asset_id?: string | null;
+    figma_url?: string | null;
+    frame_id?: string | null;
+    parser: string;
+  };
+  parse_summary: {
+    parser: string;
+    preserved_layers: number;
+    warnings: string[];
+  };
+  ir: {
+    id: string;
+    project_id: string;
+    professional_source?: Record<string, unknown>;
+  };
+};
+
 export async function fetchStudioState(options: {
   projectId: string;
   token: string;
@@ -228,6 +274,36 @@ export async function listStudioAssets(options: {
   );
   const dto = await response.json() as { assets: StudioAssetDto[] };
   return dto.assets.map(mapStudioAssetDto);
+}
+
+export async function createProfessionalImportSource(options: {
+  projectId: string;
+  token: string;
+  source: {
+    sourceType: "psd" | "psb" | "figma";
+    assetId?: string;
+    figmaUrl?: string;
+    frameId?: string;
+    parser?: string;
+  };
+  fetcher?: StudioApiFetcher;
+}): Promise<ProfessionalImportSource> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/imports/professional-sources`,
+    options.token,
+    options.fetcher,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        source_type: options.source.sourceType,
+        asset_id: options.source.assetId,
+        figma_url: options.source.figmaUrl,
+        frame_id: options.source.frameId,
+        parser: options.source.parser ?? "mock-layer-parser"
+      })
+    }
+  );
+  return mapProfessionalImportSourceDto(await response.json() as ProfessionalImportSourceDto);
 }
 
 export async function updateStudioAsset(options: {
@@ -522,6 +598,31 @@ function mapStudioSegmentationDto(dto: StudioSegmentationDto): StudioSegmentatio
       type: slice.type,
       editableBounds: slice.editable_bounds
     }))
+  };
+}
+
+function mapProfessionalImportSourceDto(dto: ProfessionalImportSourceDto): ProfessionalImportSource {
+  return {
+    id: dto.id,
+    projectId: dto.project_id,
+    status: dto.status,
+    source: {
+      sourceType: dto.source.source_type,
+      assetId: dto.source.asset_id,
+      figmaUrl: dto.source.figma_url,
+      frameId: dto.source.frame_id,
+      parser: dto.source.parser
+    },
+    parseSummary: {
+      parser: dto.parse_summary.parser,
+      preservedLayers: dto.parse_summary.preserved_layers,
+      warnings: dto.parse_summary.warnings
+    },
+    ir: {
+      id: dto.ir.id,
+      projectId: dto.ir.project_id,
+      professionalSource: dto.ir.professional_source
+    }
   };
 }
 

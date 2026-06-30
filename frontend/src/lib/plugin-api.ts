@@ -169,6 +169,45 @@ export async function fetchPluginImportLogs(options: {
   };
 }
 
+export async function submitPluginImportLog(options: {
+  exportId: string;
+  engine: string;
+  status: "succeeded" | "failed";
+  pluginVersion: string;
+  engineVersion: string;
+  durationMs: number;
+  summary: Record<string, number>;
+  logs: Array<{ level: string; message: string }>;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<PluginImportLog> {
+  const fetcher = options.fetcher ?? fetch;
+  const response = await fetcher(
+    "/api/plugin/import-logs",
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${options.token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        export_id: options.exportId,
+        engine: options.engine,
+        status: options.status,
+        plugin_version: options.pluginVersion,
+        engine_version: options.engineVersion,
+        duration_ms: options.durationMs,
+        summary: options.summary,
+        logs: options.logs
+      })
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Plugin import log submit failed: ${options.exportId}`);
+  }
+  return mapPluginImportLog(await response.json() as PluginImportLogDto);
+}
+
 export async function fetchPluginExportDownload(options: {
   exportId: string;
   token: string;

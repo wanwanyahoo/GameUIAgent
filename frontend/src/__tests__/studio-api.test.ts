@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyStudioCorrection,
+  createProfessionalImportSource,
   createStudioAiJob,
   createStudioAsset,
   createStudioSegmentation,
@@ -18,7 +19,7 @@ import {
   retryStudioAiJob,
   updateStudioAsset
 } from "../lib/studio-api";
-import { runGeneratedAssetAction, runStudioAction } from "../lib/studio-actions";
+import { runGeneratedAssetAction, runProfessionalImportAction, runStudioAction } from "../lib/studio-actions";
 import { collectGeneratedAssets } from "../lib/studio-generated-assets";
 
 describe("studio API client", () => {
@@ -219,6 +220,65 @@ describe("studio API client", () => {
     assert.equal(segmentation.slices[0]?.editableBounds, true);
   });
 
+  it("creates professional PSD import sources and maps imported Asset IR", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        id: "imp_1",
+        project_id: "prj_1",
+        status: "parsed",
+        source: {
+          source_type: "psd",
+          asset_id: "ast_psd",
+          figma_url: null,
+          frame_id: null,
+          parser: "psd-layer-parser"
+        },
+        parse_summary: {
+          parser: "psd-layer-parser",
+          preserved_layers: 3,
+          warnings: []
+        },
+        ir: {
+          id: "ir_psd",
+          project_id: "prj_1",
+          professional_source: {
+            source_type: "psd",
+            file_name: "battle-hud.psd",
+            preserved_layers: 3
+          }
+        }
+      });
+    };
+
+    const imported = await createProfessionalImportSource({
+      projectId: "prj_1",
+      token: "tok_1",
+      source: {
+        sourceType: "psd",
+        assetId: "ast_psd",
+        parser: "psd-layer-parser"
+      },
+      fetcher
+    });
+
+    assert.equal(calls[0]?.url, "/api/projects/prj_1/imports/professional-sources");
+    assert.equal(calls[0]?.init?.method, "POST");
+    assert.equal(calls[0]?.init?.body, JSON.stringify({
+      source_type: "psd",
+      asset_id: "ast_psd",
+      figma_url: undefined,
+      frame_id: undefined,
+      parser: "psd-layer-parser"
+    }));
+    assert.equal(imported.id, "imp_1");
+    assert.equal(imported.status, "parsed");
+    assert.equal(imported.source.assetId, "ast_psd");
+    assert.equal(imported.parseSummary.preservedLayers, 3);
+    assert.equal(imported.ir.id, "ir_psd");
+  });
+
   it("manages uploaded asset library operations", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = async (url: string, init?: RequestInit) => {
@@ -350,6 +410,56 @@ describe("studio API client", () => {
     await runStudioAction({ actionId: "export-package", token: "tok_1", project, studio, clients });
 
     assert.deepEqual(calls, ["ai", "segment", "correction", "export"]);
+  });
+
+  it("runs professional PSD import and Unity export as a Studio action", async () => {
+    const calls: Array<{ action: string; value?: string }> = [];
+
+    const result = await runProfessionalImportAction({
+      token: "tok_1",
+      project: {
+        id: "prj_1",
+        name: "Cyberpunk RPG UI",
+        target_engine: "unity",
+        canvas: { width: 1920, height: 1080 },
+        status: "active",
+        owner_id: "usr_1",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      clients: {
+        createAsset: async (options) => {
+          calls.push({ action: "asset", value: options.asset.name });
+          return assetDto({ id: "ast_psd", name: options.asset.name });
+        },
+        createImportSource: async (options) => {
+          calls.push({ action: "import", value: options.source.assetId });
+          return {
+            id: "imp_1",
+            projectId: options.projectId,
+            status: "parsed",
+            source: {
+              sourceType: "psd",
+              assetId: options.source.assetId,
+              parser: options.source.parser ?? "mock-layer-parser"
+            },
+            parseSummary: { parser: "mock-layer-parser", preservedLayers: 3, warnings: [] },
+            ir: { id: "ir_psd", projectId: options.projectId }
+          };
+        },
+        previewExport: async (options) => {
+          calls.push({ action: "export", value: options.targetEngine });
+          return { export: { id: "exp_unity" } };
+        }
+      }
+    });
+
+    assert.deepEqual(calls, [
+      { action: "asset", value: "Cyberpunk RPG UI.psd" },
+      { action: "import", value: "ast_psd" },
+      { action: "export", value: "unity" }
+    ]);
+    assert.equal(result.message, "PSD imported into editable Asset IR and Unity export generated");
   });
 
   it("manages queued Studio AI jobs", async () => {

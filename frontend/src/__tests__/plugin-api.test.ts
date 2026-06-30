@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { fetchPluginExportArchive, fetchPluginExportDownload, fetchPluginImportLogs, fetchPluginProjectExports } from "../lib/plugin-api";
+import { fetchPluginExportArchive, fetchPluginExportDownload, fetchPluginImportLogs, fetchPluginProjectExports, submitPluginImportLog } from "../lib/plugin-api";
 
 describe("plugin API client", () => {
   it("queries Unreal plugin exports with engine metadata", async () => {
@@ -88,6 +88,52 @@ describe("plugin API client", () => {
     assert.equal(importLogs.summary.umg_widgets_created, 1);
     assert.equal(importLogs.latestLog?.engineVersion, "5.3+");
     assert.equal(importLogs.latestLog?.logs[0]?.level, "warning");
+  });
+
+  it("submits Unity plugin import logs back to the platform", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        id: "ilog_1",
+        export_id: "exp_unity",
+        engine: "unity",
+        status: "succeeded",
+        plugin_version: "0.4.0",
+        engine_version: "2022.3.40f1",
+        duration_ms: 3900,
+        summary: { assets_imported: 4, prefabs_created: 1, scenes_created: 1, warnings: 0, errors: 0 },
+        logs: [{ level: "info", message: "Imported Unity prefab" }]
+      });
+    };
+
+    const log = await submitPluginImportLog({
+      exportId: "exp_unity",
+      engine: "unity",
+      status: "succeeded",
+      pluginVersion: "0.4.0",
+      engineVersion: "2022.3.40f1",
+      durationMs: 3900,
+      summary: { assets_imported: 4, prefabs_created: 1, scenes_created: 1, warnings: 0, errors: 0 },
+      logs: [{ level: "info", message: "Imported Unity prefab" }],
+      token: "tok_1",
+      fetcher
+    });
+
+    assert.equal(calls[0]?.url, "/api/plugin/import-logs");
+    assert.equal(calls[0]?.init?.method, "POST");
+    assert.equal(calls[0]?.init?.body, JSON.stringify({
+      export_id: "exp_unity",
+      engine: "unity",
+      status: "succeeded",
+      plugin_version: "0.4.0",
+      engine_version: "2022.3.40f1",
+      duration_ms: 3900,
+      summary: { assets_imported: 4, prefabs_created: 1, scenes_created: 1, warnings: 0, errors: 0 },
+      logs: [{ level: "info", message: "Imported Unity prefab" }]
+    }));
+    assert.equal(log.exportId, "exp_unity");
+    assert.equal(log.summary.prefabs_created, 1);
   });
 
   it("downloads plugin export packages with manifest and files", async () => {

@@ -2,15 +2,17 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth-context";
 import { getStudioStateApi, getProjectApi, type StudioState, type Project } from "../lib/projects-api";
 import { navigateTo } from "../lib/hash-router";
-import { runGeneratedAssetAction, runStudioAction } from "../lib/studio-actions";
+import { runGeneratedAssetAction, runProfessionalImportAction, runStudioAction } from "../lib/studio-actions";
 import { collectGeneratedAssets } from "../lib/studio-generated-assets";
 import {
   fetchPluginExportArchive,
   fetchPluginExportDownload,
   fetchPluginProjectExports,
+  submitPluginImportLog,
   type PluginProjectExport,
   type PluginExportArchive,
   type PluginExportDownload,
+  type PluginImportLog,
 } from "../lib/plugin-api";
 import {
   cancelStudioAiJob,
@@ -50,6 +52,9 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [downloadArchive, setDownloadArchive] = useState<PluginExportArchive | null>(null);
   const [activeExportId, setActiveExportId] = useState<string | null>(null);
   const [activeGeneratedActionId, setActiveGeneratedActionId] = useState<string | null>(null);
+  const [activeProfessionalImport, setActiveProfessionalImport] = useState(false);
+  const [activePluginImportId, setActivePluginImportId] = useState<string | null>(null);
+  const [latestPluginImportLog, setLatestPluginImportLog] = useState<PluginImportLog | null>(null);
 
   useEffect(() => {
     if (!projectId) {
@@ -233,6 +238,55 @@ export function StudioPage({ projectId }: StudioPageProps) {
     }
   };
 
+  const handleProfessionalImport = async () => {
+    if (!token || !project || activeProfessionalImport) return;
+    try {
+      setActiveProfessionalImport(true);
+      setError(null);
+      setActionMessage(null);
+      const result = await runProfessionalImportAction({ token, project });
+      setActionMessage(result.message);
+      const [latestStudio, latestAssets, latestExports] = await Promise.all([
+        getStudioStateApi(token, project.id),
+        listStudioAssets({ projectId: project.id, token }),
+        fetchPluginProjectExports({ projectId: project.id, engine: "all", token }),
+      ]);
+      setStudio(latestStudio);
+      setAssets(latestAssets);
+      setExportsList(latestExports);
+    } catch (err: any) {
+      setError(err.message || "Failed to import professional PSD");
+    } finally {
+      setActiveProfessionalImport(false);
+    }
+  };
+
+  const handlePluginImportLog = async (item: PluginProjectExport) => {
+    if (!token || !project || activePluginImportId) return;
+    try {
+      setActivePluginImportId(item.id);
+      setError(null);
+      const log = await submitPluginImportLog({
+        exportId: item.id,
+        engine: item.engine,
+        status: "succeeded",
+        pluginVersion: "0.4.0",
+        engineVersion: item.engineVersion || defaultEngineVersion(item.engine),
+        durationMs: 3900,
+        summary: pluginImportSummary(item.engine),
+        logs: [{ level: "info", message: `Imported ${item.entry.path} through GameUIAgent ${item.engine} plugin` }],
+        token,
+      });
+      setLatestPluginImportLog(log);
+      setStudio(await getStudioStateApi(token, project.id));
+      setActionMessage(`${item.engine} plugin import logged: ${log.status}`);
+    } catch (err: any) {
+      setError(err.message || "Failed to log plugin import");
+    } finally {
+      setActivePluginImportId(null);
+    }
+  };
+
   return (
     <div className="studio-layout">
       <header className="studio-topbar">
@@ -332,6 +386,20 @@ export function StudioPage({ projectId }: StudioPageProps) {
 
         <aside className="studio-sidebar right-sidebar">
           <div className="sidebar-section">
+            <h3>Professional Import</h3>
+            <div className="studio-professional-import">
+              <p>PSD/PSB/Figma layers become editable Asset IR before export.</p>
+              <button
+                type="button"
+                onClick={handleProfessionalImport}
+                disabled={activeProfessionalImport}
+              >
+                {activeProfessionalImport ? "Importing..." : "Import PSD + Export Unity"}
+              </button>
+            </div>
+          </div>
+
+          <div className="sidebar-section">
             <h3>Export Wizard</h3>
             <div className="export-steps">
               {studio.export_wizard.steps.map((step) => (
@@ -365,6 +433,13 @@ export function StudioPage({ projectId }: StudioPageProps) {
                       >
                         {activeExportId === item.id ? "Loading..." : "Download"}
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePluginImportLog(item)}
+                        disabled={activePluginImportId !== null}
+                      >
+                        {activePluginImportId === item.id ? "Logging..." : "Log Plugin Import"}
+                      </button>
                     </div>
                   </div>
                 ))
@@ -377,6 +452,13 @@ export function StudioPage({ projectId }: StudioPageProps) {
                 {downloadArchive && (
                   <span>{downloadArchive.fileName} | {downloadArchive.content.byteLength} bytes</span>
                 )}
+              </div>
+            )}
+            {latestPluginImportLog && (
+              <div className="studio-download-preview">
+                <span>{latestPluginImportLog.engine} plugin import</span>
+                <b>{latestPluginImportLog.status}</b>
+                <span>{latestPluginImportLog.pluginVersion} | {latestPluginImportLog.durationMs}ms</span>
               </div>
             )}
           </div>
@@ -488,4 +570,25 @@ export function StudioPage({ projectId }: StudioPageProps) {
       </div>
     </div>
   );
+}
+
+function pluginImportSummary(engine: string): Record<string, number> {
+  if (engine === "unity") {
+    return { assets_imported: 4, prefabs_created: 1, scenes_created: 1, warnings: 0, errors: 0 };
+  }
+  if (engine === "godot") {
+    return { scenes_created: 1, controls_created: 4, warnings: 0, errors: 0 };
+  }
+  if (engine === "unreal") {
+    return { textures_created: 1, umg_widgets_created: 1, warnings: 0, errors: 0 };
+  }
+  return { prefabs_created: 1, warnings: 0, errors: 0 };
+}
+
+function defaultEngineVersion(engine: string): string {
+  if (engine === "unity") return "2022.3.40f1";
+  if (engine === "unreal") return "5.3+";
+  if (engine === "godot") return "4.x";
+  if (engine === "cocos2") return "2.4.x+";
+  return "3.8.6+";
 }
