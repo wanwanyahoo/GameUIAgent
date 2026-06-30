@@ -186,20 +186,78 @@ describe("studio controller", () => {
     assert.equal(controller.getState().pluginExports?.length, 0);
     assert.equal(controller.getState().pluginImportSummary, undefined);
   });
+
+  it("starts polling and stops automatically when all tasks finish", async () => {
+    let tick = 0;
+    const calls: string[] = [];
+    const controller = createStudioController({
+      projectId: "prj_poll",
+      token: "tok_1",
+      fetcher: async (url) => {
+        calls.push(url as string);
+        tick += 1;
+        const completed = tick >= 3;
+        return jsonResponse(studioStateDto("unity", completed));
+      }
+    });
+
+    const pollingStates: boolean[] = [];
+    controller.subscribe((state) => {
+      if (state.polling) {
+        pollingStates.push(state.polling.active);
+      }
+    });
+
+    await controller.load();
+    controller.startPolling(10);
+    assert.equal(controller.getState().polling?.active, true);
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    assert.ok(calls.length >= 2, "expected multiple poll ticks");
+    assert.equal(controller.getState().polling?.active, false);
+  });
+
+  it("stops polling on demand", async () => {
+    const calls: string[] = [];
+    const controller = createStudioController({
+      projectId: "prj_stop",
+      token: "tok_1",
+      fetcher: async (url) => {
+        calls.push(url as string);
+        return jsonResponse(studioStateDto("unity", false));
+      }
+    });
+
+    controller.startPolling(10);
+    assert.equal(controller.getState().polling?.active, true);
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    controller.stopPolling();
+
+    const countBeforeStop = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(controller.getState().polling?.active, false);
+    assert.ok(
+      calls.length - countBeforeStop <= 1,
+      "no further calls after stop (within 1 tick tolerance)"
+    );
+  });
 });
 
-function studioStateDto(targetEngine: string) {
+function studioStateDto(targetEngine: string, allDone = false) {
   return {
     project_id: "prj_1",
     active_selection: {
       selected_layer_id: "button_primary",
       selected_asset_id: "asset_slice",
-      active_task_id: "timeline_slice"
+      active_task_id: allDone ? "" : "timeline_slice"
     },
     timeline: [
       { kind: "text_to_image", status: "succeeded", progress: 100 },
       { kind: "ui_segmentation", status: "succeeded", progress: 100 },
-      { kind: `${targetEngine}_export`, status: "queued", progress: 0 }
+      { kind: `${targetEngine}_export`, status: allDone ? "succeeded" : "queued", progress: allDone ? 100 : 0 }
     ],
     action_dock: [{ id: "apply-correction", title: "Apply Correction", shortcut: "A" }],
     segmentation_corrections: [

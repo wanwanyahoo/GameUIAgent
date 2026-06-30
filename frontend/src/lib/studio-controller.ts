@@ -23,6 +23,10 @@ export type StudioControllerState = {
   studio?: StudioApiState;
   pluginExports?: StudioControllerPluginExport[];
   pluginImportSummary?: StudioControllerPluginImportSummary;
+  polling?: {
+    active: boolean;
+    intervalMs: number;
+  };
 };
 
 export type StudioController = {
@@ -31,6 +35,8 @@ export type StudioController = {
   load: () => Promise<void>;
   applyCorrection: (correctionId: string) => Promise<void>;
   previewExport: (targetEngine: string) => Promise<void>;
+  startPolling: (intervalMs?: number) => void;
+  stopPolling: () => void;
 };
 
 type StudioControllerListener = (state: StudioControllerState) => void;
@@ -42,10 +48,39 @@ export function createStudioController(options: {
 }): StudioController {
   let state: StudioControllerState = { phase: "idle" };
   const listeners = new Set<StudioControllerListener>();
+  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let pollIntervalMs = 2000;
 
   const publish = (nextState: StudioControllerState) => {
     state = nextState;
     listeners.forEach((listener) => listener(state));
+  };
+
+  const hasActiveTasks = (studio: StudioApiState | undefined): boolean => {
+    if (!studio) return false;
+    return studio.timeline.some(
+      (task) => task.status === "queued" || task.status === "running"
+    );
+  };
+
+  const stopPollingInternal = () => {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  };
+
+  const pollTick = async () => {
+    try {
+      const studio = await fetchStudioState(options);
+      const nextState: StudioControllerState = { ...state, studio };
+      if (!hasActiveTasks(studio)) {
+        stopPollingInternal();
+        nextState.polling = { active: false, intervalMs: pollIntervalMs };
+      }
+      publish(nextState);
+    } catch {
+    }
   };
 
   const loadStudio = async (phase: "loading" | "ready") => {
@@ -100,6 +135,16 @@ export function createStudioController(options: {
             : undefined;
           return { phase: "ready", studio, pluginExports, pluginImportSummary };
       });
+    },
+    startPolling: (intervalMs = 2000) => {
+      pollIntervalMs = intervalMs;
+      stopPollingInternal();
+      pollTimer = setInterval(pollTick, intervalMs);
+      publish({ ...state, polling: { active: true, intervalMs } });
+    },
+    stopPolling: () => {
+      stopPollingInternal();
+      publish({ ...state, polling: { active: false, intervalMs: pollIntervalMs } });
     }
   };
 }

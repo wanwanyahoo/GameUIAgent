@@ -379,9 +379,15 @@ export function App() {
             ))}
           </div>
           <div className="panel timeline-panel">
-            <h3>Task Timeline</h3>
+            <h3>
+              Task Timeline
+              <span className="timeline-indicator">
+                <span className="dot" />
+                Live
+              </span>
+            </h3>
             {studioTimeline.map((task) => (
-              <div className="timeline-row" key={task.id}>
+              <div className={`timeline-row status-${task.status}`} key={task.id}>
                 <span>{task.title}</span>
                 <b>{task.status}</b>
                 <i style={{ inlineSize: `${Math.max(task.progress, 8)}%` }} />
