@@ -1335,6 +1335,30 @@ a {
   cursor: not-allowed;
 }
 
+.auth-forgot {
+  margin-top: -0.25rem;
+  text-align: right;
+  font-size: 0.8125rem;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-cyan);
+  font-size: inherit;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: opacity 0.2s;
+}
+
+.link-button:hover {
+  opacity: 0.8;
+}
+
 .auth-toggle {
   margin-top: 1.25rem;
   text-align: center;
@@ -1398,6 +1422,39 @@ a {
 .sso-btn:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(124, 248, 255, 0.3);
+}
+
+.success-message {
+  text-align: center;
+  padding: 1rem 0;
+}
+
+.success-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(56, 255, 143, 0.15);
+  border: 2px solid rgba(56, 255, 143, 0.3);
+  border-radius: 50%;
+  font-size: 1.75rem;
+  color: #38ff8f;
+}
+
+.success-message h2 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: #e8f7ff;
+}
+
+.success-message p {
+  margin: 0 0 1.5rem 0;
+  color: rgba(232, 247, 255, 0.7);
+  font-size: 0.9375rem;
+  line-height: 1.6;
 }
 
 .dashboard {
@@ -3093,6 +3150,229 @@ a {
 .form-field input:focus {
   border-color: var(--accent-cyan);
   box-shadow: 0 0 0 3px rgba(124, 248, 255, 0.15);
+}
+
+.form-field select {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(124, 248, 255, 0.2);
+  border-radius: 8px;
+  padding: 0.625rem 0.875rem;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  outline: none;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.form-field select:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 3px rgba(124, 248, 255, 0.15);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.field-hint {
+  margin: 0.375rem 0 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.success-banner {
+  background: rgba(56, 255, 143, 0.1);
+  border: 1px solid rgba(56, 255, 143, 0.3);
+  color: #38ff8f;
+  padding: 0.875rem 1.25rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  margin-bottom: 1.5rem;
+}
+
+/* ===== Team Page ===== */
+.team-page {
+  max-width: 900px;
+}
+
+.team-switcher {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.team-tab {
+  padding: 0.5rem 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.team-tab:hover {
+  border-color: var(--accent-cyan);
+  color: var(--text-primary);
+}
+
+.team-tab.active {
+  background: rgba(124, 248, 255, 0.1);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.team-tab.add-team {
+  border-style: dashed;
+}
+
+.team-info-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.team-info-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.team-info-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.team-role-badge {
+  padding: 0.125rem 0.625rem;
+  background: rgba(124, 248, 255, 0.1);
+  border: 1px solid rgba(124, 248, 255, 0.2);
+  border-radius: 20px;
+  font-size: 0.75rem;
+  color: var(--accent-cyan);
+  text-transform: capitalize;
+  font-weight: 600;
+}
+
+.team-stats {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.members-section {
+  margin-top: 2rem;
+}
+
+.members-section h3 {
+  margin: 0 0 1rem 0;
+  font-size: 1rem;
+}
+
+.members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.member-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  transition: all 0.2s ease;
+}
+
+.member-item:hover {
+  border-color: var(--accent-glow);
+}
+
+.member-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #06080d;
+  flex-shrink: 0;
+}
+
+.member-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-email {
+  font-weight: 600;
+  font-size: 0.9375rem;
+  margin-bottom: 0.125rem;
+}
+
+.member-joined {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+
+.role-select {
+  max-width: 140px;
+  flex-shrink: 0;
+}
+
+.owner-badge {
+  padding: 0.25rem 0.75rem;
+  background: linear-gradient(135deg, #7cf8ff, #d7ff66);
+  color: #06080d;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* ===== Profile Page ===== */
+.profile-page {
+  max-width: 700px;
+}
+
+.settings-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.settings-section h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.125rem;
+}
+
+.section-description {
+  margin: 0 0 1.25rem 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.danger-section {
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.danger-section h2 {
+  color: #ff6b6b;
 }
 
 .modal-actions {

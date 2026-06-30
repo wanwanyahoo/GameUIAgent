@@ -107,6 +107,17 @@ export function AuthPage({ mode }: AuthPageProps) {
               autoComplete={isLogin ? "current-password" : "new-password"}
             />
           </label>
+          {isLogin && (
+            <div className="auth-forgot">
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => navigateTo("/password-reset")}
+              >
+                Forgot password?
+              </button>
+            </div>
+          )}
           <button type="submit" className="auth-submit" disabled={isLoading}>
             {buttonText}
           </button>

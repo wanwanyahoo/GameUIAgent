@@ -9,6 +9,9 @@ import { BillingPage } from "./components/BillingPage";
 import { ApiKeysPage } from "./components/ApiKeysPage";
 import { WebhooksPage } from "./components/WebhooksPage";
 import { DeveloperPage } from "./components/DeveloperPage";
+import { PasswordResetPage } from "./components/PasswordResetPage";
+import { TeamPage } from "./components/TeamPage";
+import { ProfilePage } from "./components/ProfilePage";
 import { App as StudioApp } from "./StudioApp";
 
 function RouteRenderer() {
@@ -54,6 +57,15 @@ function RouteRenderer() {
     return <AuthPage mode="register" />;
   }
 
+  if (route.path === "/password-reset") {
+    return <PasswordResetPage mode="request" />;
+  }
+
+  if (route.path.startsWith("/reset-password")) {
+    const token = route.params.token || route.path.split("/").pop() || "";
+    return <PasswordResetPage mode="confirm" token={token} />;
+  }
+
   if (route.path === "/dashboard") {
     return <Dashboard />;
   }
@@ -71,41 +83,13 @@ function RouteRenderer() {
         {activeTab === "api-keys" && <ApiKeysPage />}
         {activeTab === "webhooks" && <WebhooksPage />}
         {activeTab === "developer" && <DeveloperPage />}
-        {activeTab === "team" && <TeamPagePlaceholder />}
-        {activeTab === "profile" && <ProfilePagePlaceholder />}
+        {activeTab === "team" && <TeamPage />}
+        {activeTab === "profile" && <ProfilePage />}
       </SettingsLayout>
     );
   }
 
   return <LandingPage />;
-}
-
-function TeamPagePlaceholder() {
-  return (
-    <div className="placeholder-page">
-      <h1>Team</h1>
-      <p className="page-subtitle">Manage your team members and roles</p>
-      <div className="empty-state">
-        <div className="empty-icon">👥</div>
-        <h3>Team management coming soon</h3>
-        <p>Invite team members, set roles and permissions, and collaborate on projects.</p>
-      </div>
-    </div>
-  );
-}
-
-function ProfilePagePlaceholder() {
-  return (
-    <div className="placeholder-page">
-      <h1>Profile</h1>
-      <p className="page-subtitle">Manage your account settings</p>
-      <div className="empty-state">
-        <div className="empty-icon">👤</div>
-        <h3>Profile settings coming soon</h3>
-        <p>Update your personal information, password, and notification preferences.</p>
-      </div>
-    </div>
-  );
 }
 
 export function App() {
