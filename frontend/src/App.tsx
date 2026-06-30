@@ -106,9 +106,14 @@ const productionRuntimeChecks = [
     detail: "Production deployments set a database path instead of relying on ephemeral process memory."
   },
   {
+    title: "Local object storage",
+    endpoint: "GAMEUIAGENT_OBJECT_STORE_DIR",
+    detail: "Binary upload and download endpoints persist original files with size, content type and SHA-256 metadata."
+  },
+  {
     title: "Readiness checks",
-    endpoint: "durable_store / salted_password_hashes / ownership_guards",
-    detail: "Runtime checks expose storage durability, password hashing and project ownership safeguards."
+    endpoint: "durable_store / object_storage / ownership_guards",
+    detail: "Runtime checks expose storage durability, object storage, password hashing and project ownership safeguards."
   }
 ] as const;
 

@@ -2,7 +2,7 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app, configure_persistent_store, store
+from app.main import app, configure_object_storage, configure_persistent_store, store
 from app.persistence import create_production_store
 
 
@@ -115,9 +115,107 @@ def test_sqlite_store_persists_users_projects_and_assets_across_reload(tmp_path)
     assert reloaded_store["assets"][asset["id"]]["url"].startswith("s3://gameuiagent-production/")
 
 
+def test_binary_asset_upload_persists_file_metadata_and_downloads(tmp_path):
+    db_path = tmp_path / "object-store.sqlite3"
+    object_store_path = tmp_path / "objects"
+    configure_persistent_store(str(db_path))
+    configure_object_storage(str(object_store_path))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Binary Upload Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    payload = b"real-binary-game-ui-asset"
+
+    upload_response = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "binary-hud.png",
+            "type": "original_upload",
+            "width": "1920",
+            "height": "1080",
+            "usage": "source_ui",
+            "tags": "hud,production",
+        },
+        files={"file": ("binary-hud.png", payload, "image/png")},
+    )
+
+    assert upload_response.status_code == 201
+    asset = upload_response.json()
+    assert asset["source"] == "object_storage"
+    assert asset["metadata"]["size_bytes"] == len(payload)
+    assert asset["metadata"]["content_type"] == "image/png"
+    assert asset["metadata"]["sha256"]
+    assert (object_store_path / asset["metadata"]["storage_key"]).exists()
+
+    reloaded_store = create_production_store()
+    reloaded_store.configure(str(db_path))
+    assert reloaded_store["assets"][asset["id"]]["metadata"]["storage_key"] == asset["metadata"]["storage_key"]
+
+    download_response = client.get(
+        f"/api/projects/{project['id']}/assets/{asset['id']}/download",
+        headers=headers,
+    )
+
+    assert download_response.status_code == 200
+    assert download_response.content == payload
+    assert download_response.headers["content-type"] == "image/png"
+
+
+def test_binary_asset_upload_rejects_unsupported_type_and_empty_file(tmp_path):
+    configure_persistent_store(str(tmp_path / "invalid-object.sqlite3"))
+    configure_object_storage(str(tmp_path / "invalid-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Invalid Binary Upload Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+
+    unsupported_response = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "script.exe",
+            "type": "executable",
+            "width": "1920",
+            "height": "1080",
+            "usage": "source_ui",
+        },
+        files={"file": ("script.exe", b"binary", "application/octet-stream")},
+    )
+    empty_response = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "empty.png",
+            "type": "original_upload",
+            "width": "1920",
+            "height": "1080",
+            "usage": "source_ui",
+        },
+        files={"file": ("empty.png", b"", "image/png")},
+    )
+
+    assert unsupported_response.status_code == 422
+    assert empty_response.status_code == 422
+
+
 def test_production_readiness_reports_durable_sqlite_store(tmp_path):
     db_path = tmp_path / "readiness.sqlite3"
+    object_store_path = tmp_path / "readiness-objects"
     configure_persistent_store(str(db_path))
+    configure_object_storage(str(object_store_path))
 
     response = client.get("/api/system/production-readiness")
 
@@ -127,7 +225,10 @@ def test_production_readiness_reports_durable_sqlite_store(tmp_path):
     assert readiness["storage"]["driver"] == "sqlite"
     assert readiness["storage"]["durable"] is True
     assert readiness["storage"]["ephemeral"] is False
+    assert readiness["object_storage"]["driver"] == "local_fs"
+    assert readiness["object_storage"]["durable"] is True
     assert "durable_store" in readiness["checks"]
+    assert "object_storage" in readiness["checks"]
 
 
 def test_sqlite_store_persists_nested_password_hash_updates(tmp_path):

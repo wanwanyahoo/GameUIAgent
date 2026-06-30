@@ -8,9 +8,11 @@ from secrets import token_hex
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
 
+from app.object_storage import LocalObjectStorage, create_object_storage
 from app.persistence import ProductionStore, create_production_store
 
 
@@ -172,15 +174,24 @@ class PluginAuthRequest(BaseModel):
 
 
 store: ProductionStore = create_production_store()
+object_storage: LocalObjectStorage = create_object_storage()
 
 
 def configure_persistent_store(db_path: str) -> None:
     store.configure(db_path)
 
 
+def configure_object_storage(root_path: str) -> None:
+    object_storage.configure(root_path)
+
+
 production_store_path = getenv("GAMEUIAGENT_STORE_DB")
 if production_store_path:
     configure_persistent_store(production_store_path)
+
+production_object_store_path = getenv("GAMEUIAGENT_OBJECT_STORE_DIR")
+if production_object_store_path:
+    configure_object_storage(production_object_store_path)
 
 
 def make_id(prefix: str) -> str:
@@ -232,16 +243,24 @@ def health() -> dict[str, str]:
 @app.get("/api/system/production-readiness")
 def production_readiness() -> dict[str, Any]:
     durable = store.db_path is not None
+    object_durable = object_storage.durable
     return {
-        "status": "production_foundation_ready" if durable else "ephemeral_demo_mode",
+        "status": "production_foundation_ready" if durable and object_durable else "ephemeral_demo_mode",
         "storage": {
             "driver": "sqlite" if durable else "memory",
             "durable": durable,
             "ephemeral": not durable,
             "path": store.db_path,
         },
+        "object_storage": {
+            "driver": "local_fs" if object_durable else "unconfigured",
+            "durable": object_durable,
+            "ephemeral": not object_durable,
+            "root": str(object_storage.root) if object_storage.root else None,
+        },
         "checks": [
             "durable_store" if durable else "ephemeral_store",
+            "object_storage" if object_durable else "missing_object_storage",
             "salted_password_hashes",
             "project_ownership_guards",
             "engine_manifest_contracts",
@@ -435,6 +454,56 @@ def create_project_asset(
     return asset
 
 
+@app.post("/api/projects/{project_id}/assets/upload", status_code=status.HTTP_201_CREATED)
+async def upload_project_asset(
+    project_id: str,
+    name: str = Form(),
+    type: str = Form(),
+    width: int = Form(gt=0),
+    height: int = Form(gt=0),
+    usage: str = Form(),
+    tags: str = Form(default=""),
+    file: UploadFile = File(),
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    validate_asset_type(type)
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty upload file")
+    try:
+        stored = object_storage.put(
+            project["id"],
+            file.filename or name,
+            content,
+            file.content_type or "application/octet-stream",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    asset = {
+        "id": make_id("ast"),
+        "project_id": project["id"],
+        "type": type,
+        "name": name,
+        "url": f"/api/projects/{project['id']}/assets/{{asset_id}}/download",
+        "source": "object_storage",
+        "metadata": {
+            "width": width,
+            "height": height,
+            "usage": usage,
+            "tags": parse_asset_tags(tags),
+            "storage_key": stored.key,
+            "size_bytes": stored.size_bytes,
+            "sha256": stored.sha256,
+            "content_type": stored.content_type,
+        },
+    }
+    asset["url"] = f"/api/projects/{project['id']}/assets/{asset['id']}/download"
+    store["assets"][asset["id"]] = asset
+    record_asset_version(asset, "created")
+    return asset
+
+
 @app.get("/api/projects/{project_id}/assets")
 def list_project_assets(
     project_id: str,
@@ -479,6 +548,30 @@ def list_project_asset_versions(
     project = require_project(project_id, user)
     require_project_asset(project, asset_id)
     return {"versions": store["asset_versions"].get(asset_id, [])}
+
+
+@app.get("/api/projects/{project_id}/assets/{asset_id}/download")
+def download_project_asset(
+    project_id: str,
+    asset_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> FileResponse:
+    project = require_project(project_id, user)
+    asset = require_project_asset(project, asset_id)
+    storage_key = asset.get("metadata", {}).get("storage_key")
+    if not storage_key:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored object not found")
+    try:
+        path = object_storage.path_for(storage_key)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored object missing")
+    return FileResponse(
+        path,
+        media_type=asset.get("metadata", {}).get("content_type", "application/octet-stream"),
+        filename=asset["name"],
+    )
 
 
 @app.post("/api/projects/{project_id}/assets/{asset_id}/copy", status_code=status.HTTP_201_CREATED)
@@ -1318,8 +1411,7 @@ def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_uploaded_asset(project: dict[str, Any], payload: AssetRequest) -> dict[str, Any]:
-    if payload.type not in {"original_upload", "reference_image", "mask", "psd", "psb", "figma_link"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported asset type")
+    validate_asset_type(payload.type)
     return {
         "id": make_id("ast"),
         "project_id": project["id"],
@@ -1334,6 +1426,15 @@ def build_uploaded_asset(project: dict[str, Any], payload: AssetRequest) -> dict
             "tags": payload.tags,
         },
     }
+
+
+def validate_asset_type(asset_type: str) -> None:
+    if asset_type not in {"original_upload", "reference_image", "mask", "psd", "psb", "figma_link"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported asset type")
+
+
+def parse_asset_tags(tags: str) -> list[str]:
+    return [tag.strip() for tag in tags.split(",") if tag.strip()]
 
 
 def require_optional_project_asset(project: dict[str, Any], asset_id: str | None) -> dict[str, Any] | None:

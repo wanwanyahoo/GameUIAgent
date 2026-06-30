@@ -175,6 +175,9 @@ describe("App", () => {
 
     assert.match(html, /Production Runtime/);
     assert.match(html, /SQLite durable store/);
+    assert.match(html, /Local object storage/);
+    assert.match(html, /GAMEUIAGENT_OBJECT_STORE_DIR/);
+    assert.match(html, /Binary upload and download/);
     assert.match(html, /\/api\/system\/production-readiness/);
     assert.match(html, /No in-memory-only data loss/);
   });
