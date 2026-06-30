@@ -126,6 +126,8 @@ class ProfessionalLayer(BaseModel):
     auto_layout: dict[str, Any] | None = None
     opacity: float | None = None
     visible: bool | None = None
+    is_group: bool | None = None
+    smart_object: bool | None = None
 
 
 class ProfessionalImportRequest(BaseModel):
@@ -1957,35 +1959,63 @@ def parse_psd_layer_records(source_asset: dict[str, Any], source_type: str) -> l
         cursor += 4
         extra_data = layer_info[cursor : cursor + extra_length]
         cursor += extra_length
-        name = parse_psd_layer_name(extra_data) or f"Layer {index + 1}"
+        metadata = parse_psd_layer_metadata(extra_data)
+        name = metadata.get("name") or f"Layer {index + 1}"
+        is_group = metadata.get("is_group") is True
+        smart_object = metadata.get("smart_object") is True
+        kind = "group" if is_group else "component" if smart_object else "image"
         layers.append(
             ProfessionalLayer(
                 id=f"psd_layer_{index + 1}_{sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower() or 'layer'}",
                 name=name,
-                kind="image",
+                kind=kind,
                 rect={"x": left, "y": top, "width": max(right - left, 0), "height": max(bottom - top, 0)},
                 opacity=round(opacity_byte / 255, 3),
                 visible=(flags & 2) == 0,
+                is_group=is_group,
+                smart_object=smart_object,
             )
         )
     return layers
 
 
-def parse_psd_layer_name(extra_data: bytes) -> str | None:
+def parse_psd_layer_metadata(extra_data: bytes) -> dict[str, Any]:
     if len(extra_data) < 9:
-        return None
+        return {}
     cursor = 0
     mask_length = read_uint(extra_data[cursor : cursor + 4])
     cursor += 4 + mask_length
     if cursor + 4 > len(extra_data):
-        return None
+        return {}
     blending_ranges_length = read_uint(extra_data[cursor : cursor + 4])
     cursor += 4 + blending_ranges_length
     if cursor >= len(extra_data):
-        return None
+        return {}
     name_length = extra_data[cursor]
     cursor += 1
-    return extra_data[cursor : cursor + name_length].decode("utf-8", errors="ignore")
+    name = extra_data[cursor : cursor + name_length].decode("utf-8", errors="ignore")
+    cursor += name_length
+    cursor += (4 - (cursor % 4)) % 4
+    metadata: dict[str, Any] = {"name": name}
+    while cursor + 12 <= len(extra_data):
+        signature = extra_data[cursor : cursor + 4]
+        key = extra_data[cursor + 4 : cursor + 8]
+        length = read_uint(extra_data[cursor + 8 : cursor + 12])
+        cursor += 12
+        payload = extra_data[cursor : cursor + length]
+        cursor += length + (length % 2)
+        if signature not in {b"8BIM", b"8B64"}:
+            continue
+        if key == b"luni" and len(payload) >= 4:
+            char_count = read_uint(payload[0:4])
+            unicode_bytes = payload[4 : 4 + char_count * 2]
+            metadata["name"] = unicode_bytes.decode("utf-16-be", errors="ignore")
+        elif key == b"lsct" and len(payload) >= 4:
+            section_type = read_uint(payload[0:4])
+            metadata["is_group"] = section_type in {1, 2, 3}
+        elif key in {b"SoLd", b"SoLE", b"SoCo"}:
+            metadata["smart_object"] = True
+    return metadata
 
 
 def read_uint(data: bytes) -> int:
@@ -2051,6 +2081,10 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             node["opacity"] = layer["opacity"]
         if layer.get("visible") is not None:
             node["visible"] = layer["visible"]
+        if layer.get("is_group") is not None:
+            node["professional_source"]["is_group"] = layer["is_group"]
+        if layer.get("smart_object") is not None:
+            node["professional_source"]["smart_object"] = layer["smart_object"]
         nodes.append(node)
     return {
         "id": make_id("ir"),
@@ -2074,6 +2108,8 @@ def layer_type_to_node_type(layer: dict[str, Any]) -> str:
     name = layer["name"].lower()
     if layer["kind"] == "text":
         return "text"
+    if layer["kind"] == "group":
+        return "group"
     if "button" in name:
         return "button"
     if layer["kind"] == "component":

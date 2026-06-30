@@ -29,11 +29,39 @@ def minimal_psd_header(width: int, height: int, *, version: int = 1) -> bytes:
     )
 
 
-def psd_layer_record(name: str, rect: dict[str, int], *, opacity: int = 255, hidden: bool = False) -> bytes:
+def psd_additional_layer_info(key: bytes, payload: bytes) -> bytes:
+    if len(key) != 4:
+        raise ValueError("PSD additional layer info key must be 4 bytes")
+    padded_payload = payload + (b"\x00" if len(payload) % 2 else b"")
+    return b"8BIM" + key + len(payload).to_bytes(4, "big") + padded_payload
+
+
+def psd_unicode_layer_name(name: str) -> bytes:
+    encoded = name.encode("utf-16-be")
+    return psd_additional_layer_info(b"luni", len(name).to_bytes(4, "big") + encoded)
+
+
+def psd_layer_record(
+    name: str,
+    rect: dict[str, int],
+    *,
+    opacity: int = 255,
+    hidden: bool = False,
+    unicode_name: str | None = None,
+    section_divider: int | None = None,
+    smart_object: bool = False,
+) -> bytes:
     name_bytes = name.encode("utf-8")
     pascal_name = bytes([len(name_bytes)]) + name_bytes
     pascal_name += b"\x00" * ((4 - (len(pascal_name) % 4)) % 4)
-    extra_data = (0).to_bytes(4, "big") + (0).to_bytes(4, "big") + pascal_name
+    additional_info = b""
+    if unicode_name:
+        additional_info += psd_unicode_layer_name(unicode_name)
+    if section_divider is not None:
+        additional_info += psd_additional_layer_info(b"lsct", section_divider.to_bytes(4, "big"))
+    if smart_object:
+        additional_info += psd_additional_layer_info(b"SoLd", b"\x00\x00\x00\x01")
+    extra_data = (0).to_bytes(4, "big") + (0).to_bytes(4, "big") + pascal_name + additional_info
     return (
         rect["y"].to_bytes(4, "big")
         + rect["x"].to_bytes(4, "big")
@@ -57,6 +85,33 @@ def minimal_psd_with_layers(width: int, height: int) -> bytes:
     layer_records = [
         psd_layer_record("Main Panel", {"x": 24, "y": 32, "width": 240, "height": 120}, opacity=255),
         psd_layer_record("Hidden CTA Button", {"x": 180, "y": 170, "width": 96, "height": 44}, opacity=128, hidden=True),
+    ]
+    channel_pixels = b"\x00\x00" * len(layer_records)
+    layer_info = len(layer_records).to_bytes(2, "big") + b"".join(layer_records) + channel_pixels
+    layer_mask_section = len(layer_info).to_bytes(4, "big") + layer_info
+    return (
+        minimal_psd_header(width, height)
+        + (0).to_bytes(4, "big")
+        + (0).to_bytes(4, "big")
+        + len(layer_mask_section).to_bytes(4, "big")
+        + layer_mask_section
+    )
+
+
+def minimal_psd_with_advanced_layers(width: int, height: int) -> bytes:
+    layer_records = [
+        psd_layer_record(
+            "Group",
+            {"x": 0, "y": 0, "width": width, "height": height},
+            unicode_name="商店弹窗组",
+            section_divider=1,
+        ),
+        psd_layer_record(
+            "Smart",
+            {"x": 48, "y": 64, "width": 180, "height": 96},
+            unicode_name="购买按钮智能对象",
+            smart_object=True,
+        ),
     ]
     channel_pixels = b"\x00\x00" * len(layer_records)
     layer_info = len(layer_records).to_bytes(2, "big") + b"".join(layer_records) + channel_pixels
@@ -831,6 +886,56 @@ def test_professional_import_source_preserves_psd_layer_records(tmp_path):
     assert imported["design_document"]["layers"][1]["visible"] is False
     assert imported["ir"]["nodes"][2]["opacity"] == 0.502
     assert imported["ir"]["nodes"][2]["visible"] is False
+
+
+def test_professional_import_source_preserves_psd_unicode_groups_and_smart_objects(tmp_path):
+    configure_persistent_store(str(tmp_path / "psd-advanced.sqlite3"))
+    configure_object_storage(str(tmp_path / "psd-advanced-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Advanced PSD UI",
+            "target_engine": "unity",
+            "canvas": {"width": 512, "height": 256},
+        },
+    ).json()
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "advanced-layered-hud.psd",
+            "type": "psd",
+            "width": "512",
+            "height": "256",
+            "usage": "professional_import",
+        },
+        files={"file": ("advanced-layered-hud.psd", minimal_psd_with_advanced_layers(512, 256), "image/vnd.adobe.photoshop")},
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": uploaded["id"],
+            "parser": "psd-binary-header",
+        },
+    )
+
+    assert source_response.status_code == 201
+    imported = source_response.json()
+    layers = imported["design_document"]["layers"]
+    assert [layer["name"] for layer in layers] == ["商店弹窗组", "购买按钮智能对象"]
+    assert layers[0]["kind"] == "group"
+    assert layers[0]["is_group"] is True
+    assert layers[1]["kind"] == "component"
+    assert layers[1]["smart_object"] is True
+    assert imported["ir"]["nodes"][1]["type"] == "group"
+    assert imported["ir"]["nodes"][1]["professional_source"]["is_group"] is True
+    assert imported["ir"]["nodes"][2]["type"] == "component"
+    assert imported["ir"]["nodes"][2]["professional_source"]["smart_object"] is True
 
 
 def test_uploaded_png_segmentation_uses_detected_binary_dimensions(tmp_path):
