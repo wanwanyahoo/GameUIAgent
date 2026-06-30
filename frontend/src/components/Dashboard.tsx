@@ -151,7 +151,7 @@ export function Dashboard() {
                 <button
                   key={project.id}
                   type="button"
-                  onClick={() => navigateTo(`/studio`)}
+                  onClick={() => navigateTo(`/studio/${project.id}`)}
                   className="project-card"
                 >
                   <div className="project-thumb">

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth-context";
 
 export function ProfilePage() {
-  const { user, updateProfile } = useAuth();
+  const { user, token, updateProfile } = useAuth();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");

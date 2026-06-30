@@ -12,7 +12,7 @@ import { DeveloperPage } from "./components/DeveloperPage";
 import { PasswordResetPage } from "./components/PasswordResetPage";
 import { TeamPage } from "./components/TeamPage";
 import { ProfilePage } from "./components/ProfilePage";
-import { App as StudioApp } from "./StudioApp";
+import { StudioPage } from "./components/StudioPage";
 
 function RouteRenderer() {
   const { route, navigate } = useHashRouter();
@@ -70,8 +70,10 @@ function RouteRenderer() {
     return <Dashboard />;
   }
 
-  if (route.path === "/studio") {
-    return <StudioApp />;
+  if (route.path.startsWith("/studio")) {
+    const parts = route.path.split("/").filter(Boolean);
+    const projectId = parts.length >= 2 ? parts[1] : "";
+    return <StudioPage projectId={projectId} />;
   }
 
   if (route.path.startsWith("/settings")) {

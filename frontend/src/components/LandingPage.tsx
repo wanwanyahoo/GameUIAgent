@@ -3,6 +3,7 @@ import { navigateTo } from "../lib/hash-router";
 
 export function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const onGetStarted = () => navigateTo("/register");
 
   const features = [
     {

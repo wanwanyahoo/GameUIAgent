@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it, beforeEach, afterEach, before } from "node:test";
 
-import { createProjectApi, listProjectsApi } from "../lib/projects-api";
+import { createProjectApi, getProjectApi, getStudioStateApi, listProjectsApi } from "../lib/projects-api";
 
 function createLocalStorageMock(): Storage {
   const store = new Map<string, string>();
@@ -41,7 +41,8 @@ describe("projects-api", () => {
     ];
 
     const fetcher = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      assert.equal(init?.headers?.["Authorization"], "Bearer tok_test");
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(headers.Authorization, "Bearer tok_test");
       return {
         ok: true,
         status: 200,
@@ -140,5 +141,73 @@ describe("projects-api", () => {
       assert.ok(err instanceof Error);
       assert.match((err as Error).message, /Validation error/);
     }
+  });
+
+  it("getProjectApi loads one project by id", async () => {
+    let capturedInput = "";
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      capturedInput = String(input);
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(headers.Authorization, "Bearer tok_test");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "prj_live",
+          name: "Live Project",
+          target_engine: "unity",
+          canvas: { width: 1920, height: 1080 },
+          status: "active",
+          owner_id: "usr_1",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        }),
+        text: async () => "",
+        headers: new Headers(),
+      } as Response;
+    };
+
+    const project = await getProjectApi("tok_test", "prj_live", { fetcher });
+
+    assert.equal(capturedInput, "/api/projects/prj_live");
+    assert.equal(project.id, "prj_live");
+    assert.equal(project.name, "Live Project");
+  });
+
+  it("getStudioStateApi loads studio state for a project", async () => {
+    let capturedInput = "";
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      capturedInput = String(input);
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(headers.Authorization, "Bearer tok_test");
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          project_id: "prj_live",
+          active_selection: {
+            selected_layer_id: "layer_button",
+            selected_asset_id: "asset_slice",
+            active_task_id: "timeline_slice",
+          },
+          action_dock: [{ id: "export", title: "Export", shortcut: "E" }],
+          timeline: [{ id: "timeline_slice", title: "Slice UI", status: "ready" }],
+          segmentation_corrections: [],
+          export_wizard: {
+            target_engine: "unity",
+            steps: [{ id: "validate", title: "Validate IR", status: "active" }],
+          },
+        }),
+        text: async () => "",
+        headers: new Headers(),
+      } as Response;
+    };
+
+    const studio = await getStudioStateApi("tok_test", "prj_live", { fetcher });
+
+    assert.equal(capturedInput, "/api/projects/prj_live/studio");
+    assert.equal(studio.project_id, "prj_live");
+    assert.equal(studio.action_dock[0].title, "Export");
+    assert.equal(studio.export_wizard.target_engine, "unity");
   });
 });
