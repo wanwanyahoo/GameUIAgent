@@ -300,6 +300,28 @@ def test_homepage_capabilities_match_platform_scope():
     }.issubset(capabilities)
 
 
+def test_project_detail_loads_created_project_for_studio_navigation():
+    headers = auth_headers()
+    created = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Studio Navigation Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    )
+    assert created.status_code == 201
+    project = created.json()
+
+    detail_response = client.get(f"/api/projects/{project['id']}", headers=headers)
+
+    assert detail_response.status_code == 200
+    assert detail_response.json()["id"] == project["id"]
+    assert detail_response.json()["name"] == "Studio Navigation Project"
+    assert detail_response.json()["target_engine"] == "unity"
+
+
 def test_auth_stores_salted_password_hashes():
     email = f"secure-{uuid4().hex}@gameuiagent.dev"
     password = "secret-pass"

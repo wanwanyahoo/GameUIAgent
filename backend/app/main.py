@@ -667,6 +667,11 @@ def list_projects(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any
     }
 
 
+@app.get("/api/projects/{project_id}")
+def get_project(project_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    return require_project(project_id, user)
+
+
 @app.post("/api/projects/{project_id}/assets", status_code=status.HTTP_201_CREATED)
 def create_project_asset(
     project_id: str,
