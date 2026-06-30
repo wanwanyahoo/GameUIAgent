@@ -1971,12 +1971,14 @@ def parse_psd_layer_records(source_asset: dict[str, Any], source_type: str) -> l
             continue
         is_group = section_divider_type in {1, 2}
         smart_object = metadata.get("smart_object") is True
-        kind = "group" if is_group else "component" if smart_object else "image"
+        text_content = metadata.get("text")
+        kind = "group" if is_group else "text" if text_content else "component" if smart_object else "image"
         layer = ProfessionalLayer(
             id=f"psd_layer_{index + 1}_{sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower() or 'layer'}",
             name=name,
             kind=kind,
             rect={"x": left, "y": top, "width": max(right - left, 0), "height": max(bottom - top, 0)},
+            text=text_content,
             opacity=round(opacity_byte / 255, 3),
             visible=(flags & 2) == 0,
             is_group=is_group,
@@ -2028,7 +2030,53 @@ def parse_psd_layer_metadata(extra_data: bytes) -> dict[str, Any]:
             metadata["is_group"] = section_type in {1, 2}
         elif key in {b"SoLd", b"SoLE", b"SoCo"}:
             metadata["smart_object"] = True
+        elif key in {b"TySh", b"tySh"}:
+            text = parse_psd_type_tool_text(payload)
+            if text:
+                metadata["text"] = text
     return metadata
+
+
+def parse_psd_type_tool_text(payload: bytes) -> str | None:
+    for encoding in ("utf-8", "utf-16-be"):
+        decoded = payload.decode(encoding, errors="ignore")
+        text = extract_engine_data_text(decoded)
+        if text:
+            return text
+    return None
+
+
+def extract_engine_data_text(engine_data: str) -> str | None:
+    for marker in ("/Text", "/Txt"):
+        marker_index = engine_data.find(marker)
+        while marker_index != -1:
+            open_index = engine_data.find("(", marker_index + len(marker))
+            if open_index == -1:
+                break
+            text, close_index = read_parenthesized_text(engine_data, open_index)
+            if text:
+                return text
+            marker_index = engine_data.find(marker, max(close_index, open_index + 1))
+    return None
+
+
+def read_parenthesized_text(value: str, open_index: int) -> tuple[str | None, int]:
+    text: list[str] = []
+    escaped = False
+    cursor = open_index + 1
+    while cursor < len(value):
+        char = value[cursor]
+        if escaped:
+            text.append({"n": "\n", "r": "\r", "t": "\t"}.get(char, char))
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif char == ")":
+            return "".join(text), cursor
+        else:
+            text.append(char)
+        cursor += 1
+    return None, cursor
 
 
 def read_uint(data: bytes) -> int:

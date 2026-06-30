@@ -41,6 +41,11 @@ def psd_unicode_layer_name(name: str) -> bytes:
     return psd_additional_layer_info(b"luni", len(name).to_bytes(4, "big") + encoded)
 
 
+def psd_type_tool_text(text: str) -> bytes:
+    engine_data = f"/EngineDict << /Editor << /Text ({text}) >> >>".encode("utf-8")
+    return psd_additional_layer_info(b"TySh", engine_data)
+
+
 def psd_layer_record(
     name: str,
     rect: dict[str, int],
@@ -50,6 +55,7 @@ def psd_layer_record(
     unicode_name: str | None = None,
     section_divider: int | None = None,
     smart_object: bool = False,
+    type_tool_text: str | None = None,
 ) -> bytes:
     name_bytes = name.encode("utf-8")
     pascal_name = bytes([len(name_bytes)]) + name_bytes
@@ -61,6 +67,8 @@ def psd_layer_record(
         additional_info += psd_additional_layer_info(b"lsct", section_divider.to_bytes(4, "big"))
     if smart_object:
         additional_info += psd_additional_layer_info(b"SoLd", b"\x00\x00\x00\x01")
+    if type_tool_text:
+        additional_info += psd_type_tool_text(type_tool_text)
     extra_data = (0).to_bytes(4, "big") + (0).to_bytes(4, "big") + pascal_name + additional_info
     return (
         rect["y"].to_bytes(4, "big")
@@ -148,6 +156,27 @@ def minimal_psd_with_closed_group(width: int, height: int) -> bytes:
             "Badge",
             {"x": 420, "y": 20, "width": 48, "height": 48},
             unicode_name="外部角标",
+        ),
+    ]
+    channel_pixels = b"\x00\x00" * len(layer_records)
+    layer_info = len(layer_records).to_bytes(2, "big") + b"".join(layer_records) + channel_pixels
+    layer_mask_section = len(layer_info).to_bytes(4, "big") + layer_info
+    return (
+        minimal_psd_header(width, height)
+        + (0).to_bytes(4, "big")
+        + (0).to_bytes(4, "big")
+        + len(layer_mask_section).to_bytes(4, "big")
+        + layer_mask_section
+    )
+
+
+def minimal_psd_with_text_layer(width: int, height: int) -> bytes:
+    layer_records = [
+        psd_layer_record(
+            "Title",
+            {"x": 80, "y": 42, "width": 220, "height": 64},
+            unicode_name="主标题文本",
+            type_tool_text="START",
         ),
     ]
     channel_pixels = b"\x00\x00" * len(layer_records)
@@ -1063,6 +1092,52 @@ def test_professional_import_source_does_not_parent_layers_after_psd_group_end(t
     assert child_layer["parent_id"] == group_layer["id"]
     assert "parent_id" not in badge_layer
     assert "group_path" not in imported["ir"]["nodes"][3]["professional_source"]
+
+
+def test_professional_import_source_preserves_psd_text_layer_content(tmp_path):
+    configure_persistent_store(str(tmp_path / "psd-text.sqlite3"))
+    configure_object_storage(str(tmp_path / "psd-text-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Text PSD UI",
+            "target_engine": "unity",
+            "canvas": {"width": 512, "height": 256},
+        },
+    ).json()
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "text-layer-hud.psd",
+            "type": "psd",
+            "width": "512",
+            "height": "256",
+            "usage": "professional_import",
+        },
+        files={"file": ("text-layer-hud.psd", minimal_psd_with_text_layer(512, 256), "image/vnd.adobe.photoshop")},
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": uploaded["id"],
+            "parser": "psd-binary-header",
+        },
+    )
+
+    assert source_response.status_code == 201
+    imported = source_response.json()
+    layer = imported["design_document"]["layers"][0]
+    assert layer["name"] == "主标题文本"
+    assert layer["kind"] == "text"
+    assert layer["text"] == "START"
+    assert imported["ir"]["nodes"][1]["type"] == "text"
+    assert imported["ir"]["nodes"][1]["text"]["content"] == "START"
 
 
 def test_uploaded_png_segmentation_uses_detected_binary_dimensions(tmp_path):
