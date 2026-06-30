@@ -304,7 +304,7 @@ a {
 }
 
 .studio-ops {
-  grid-template-columns: 0.9fr 1.35fr 1fr;
+  grid-template-columns: 0.9fr 1.25fr 1fr 1fr;
   margin-top: 1rem;
 }
 
@@ -319,6 +319,7 @@ a {
 .action-dock,
 .correction-queue,
 .export-wizard,
+.import-telemetry,
 .timeline-panel,
 .layer-tree,
 .inspector-panel {
@@ -330,6 +331,7 @@ a {
 .asset-panel span,
 .inspector p,
 .inspector-panel p,
+.import-telemetry p,
 .correction-queue article,
 .layer-root,
 .timeline-row,
@@ -418,6 +420,18 @@ a {
 .inspector-panel p {
   display: grid;
   gap: 0.4rem;
+}
+
+.import-telemetry p {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.import-telemetry b {
+  color: #d7ff66;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
 }
 
 .action-dock {

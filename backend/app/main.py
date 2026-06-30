@@ -524,6 +524,11 @@ def plugin_import_log(
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     export = require_export(payload.export_id, user)
+    if payload.engine != export["package"]["manifest"]["engine"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Import log engine does not match export engine",
+        )
     log = {
         "id": make_id("ilog"),
         "export_id": export["id"],
@@ -538,6 +543,27 @@ def plugin_import_log(
     store["import_logs"][log["id"]] = log
     export["last_import_log_id"] = log["id"]
     return log
+
+
+@app.get("/api/plugin/exports/{export_id}/import-logs")
+def plugin_export_import_logs(export_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    export = require_export(export_id, user)
+    logs = [
+        log
+        for log in store["import_logs"].values()
+        if log["export_id"] == export["id"]
+    ]
+    summary: dict[str, int] = {}
+    for log in logs:
+        for key, value in log["summary"].items():
+            summary[key] = summary.get(key, 0) + value
+    return {
+        "export_id": export["id"],
+        "engine": export["package"]["manifest"]["engine"],
+        "summary": summary,
+        "latest_log": logs[-1] if logs else None,
+        "logs": logs,
+    }
 
 
 @app.post("/api/user/api-keys", status_code=status.HTTP_201_CREATED)

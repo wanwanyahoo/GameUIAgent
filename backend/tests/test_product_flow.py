@@ -571,6 +571,69 @@ def test_unity_plugin_manifest_download_and_import_log_flow():
     assert log_response.json()["summary"]["prefabs_created"] == 1
 
 
+def test_unreal_plugin_import_logs_can_be_queried_with_summary():
+    headers = auth_headers()
+    created = create_engine_export(headers, "unreal", "Unreal Import HUD")
+    export_id = created["export"]["id"]
+
+    log_response = client.post(
+        "/api/plugin/import-logs",
+        headers=headers,
+        json={
+            "export_id": export_id,
+            "engine": "unreal",
+            "status": "succeeded",
+            "plugin_version": "0.2.0",
+            "engine_version": "5.3+",
+            "duration_ms": 5200,
+            "summary": {
+                "textures_created": 4,
+                "umg_widgets_created": 1,
+                "slate_slots_bound": 7,
+                "warnings": 1,
+                "errors": 0,
+            },
+            "logs": [{"level": "warning", "message": "Texture compression preset was normalized"}],
+        },
+    )
+    assert log_response.status_code == 201
+
+    query_response = client.get(f"/api/plugin/exports/{export_id}/import-logs", headers=headers)
+
+    assert query_response.status_code == 200
+    import_logs = query_response.json()
+    assert import_logs["export_id"] == export_id
+    assert import_logs["engine"] == "unreal"
+    assert import_logs["summary"]["textures_created"] == 4
+    assert import_logs["summary"]["umg_widgets_created"] == 1
+    assert import_logs["summary"]["warnings"] == 1
+    assert import_logs["latest_log"]["engine_version"] == "5.3+"
+    assert import_logs["latest_log"]["logs"][0]["level"] == "warning"
+
+
+def test_plugin_import_log_rejects_engine_mismatch():
+    headers = auth_headers()
+    export_id = create_engine_export(headers, "unreal", "Mismatched Import HUD")["export"]["id"]
+
+    log_response = client.post(
+        "/api/plugin/import-logs",
+        headers=headers,
+        json={
+            "export_id": export_id,
+            "engine": "unity",
+            "status": "succeeded",
+            "plugin_version": "0.2.0",
+            "engine_version": "2022.3.40f1",
+            "duration_ms": 1200,
+            "summary": {"prefabs_created": 1, "warnings": 0, "errors": 0},
+            "logs": [{"level": "info", "message": "Wrong engine log"}],
+        },
+    )
+
+    assert log_response.status_code == 422
+    assert log_response.json()["detail"] == "Import log engine does not match export engine"
+
+
 def test_multi_engine_exports_have_native_manifest_import_plans():
     headers = auth_headers()
     cases = [

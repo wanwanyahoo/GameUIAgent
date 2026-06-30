@@ -20,6 +20,12 @@ import {
 } from "./lib/platform";
 
 const demoProject = createDemoProject("Cyberpunk RPG UI", "unity");
+const pluginImportTelemetry = [
+  ["textures_created", 4],
+  ["umg_widgets_created", 1],
+  ["slate_slots_bound", 7],
+  ["warnings", 1]
+] as const;
 
 export function App() {
   return (
@@ -162,6 +168,16 @@ export function App() {
                 <strong>{step.title}</strong>
                 <b>{step.status}</b>
               </div>
+            ))}
+          </div>
+          <div className="panel import-telemetry">
+            <h3>Plugin Import Telemetry</h3>
+            <small>Unreal 5.3+ import summary</small>
+            {pluginImportTelemetry.map(([label, value]) => (
+              <p key={label}>
+                <b>{label}</b>
+                <span>{value}</span>
+              </p>
             ))}
           </div>
         </div>

@@ -109,4 +109,13 @@ describe("App", () => {
     assert.match(html, /Select Target Engine/);
     assert.match(html, /Synced via Studio API/);
   });
+
+  it("renders Unreal plugin import log telemetry", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Plugin Import Telemetry/);
+    assert.match(html, /Unreal 5.3\+ import summary/);
+    assert.match(html, /umg_widgets_created/);
+    assert.match(html, /slate_slots_bound/);
+  });
 });

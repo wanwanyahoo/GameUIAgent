@@ -86,6 +86,37 @@ describe("studio controller", () => {
             ]
           });
         }
+        if (url.endsWith("/import-logs")) {
+          return jsonResponse({
+            export_id: "exp_unreal",
+            engine: "unreal",
+            summary: {
+              textures_created: 4,
+              umg_widgets_created: 1,
+              slate_slots_bound: 7,
+              warnings: 1,
+              errors: 0
+            },
+            latest_log: {
+              id: "ilog_1",
+              export_id: "exp_unreal",
+              engine: "unreal",
+              status: "succeeded",
+              plugin_version: "0.2.0",
+              engine_version: "5.3+",
+              duration_ms: 5200,
+              summary: {
+                textures_created: 4,
+                umg_widgets_created: 1,
+                slate_slots_bound: 7,
+                warnings: 1,
+                errors: 0
+              },
+              logs: [{ level: "warning", message: "Texture compression preset was normalized" }]
+            },
+            logs: []
+          });
+        }
         return jsonResponse(studioStateDto("unreal"));
       }
     });
@@ -101,6 +132,59 @@ describe("studio controller", () => {
     assert.equal(controller.getState().pluginExports?.[0]?.engine, "unreal");
     assert.equal(controller.getState().pluginExports?.[0]?.entry.type, "umg_widget_blueprint");
     assert.equal(pluginExports.at(-1)?.[0]?.engineVersion, "5.3+");
+    assert.equal(controller.getState().pluginImportSummary?.summary.umg_widgets_created, 1);
+    assert.equal(controller.getState().pluginImportSummary?.latestLog?.engineVersion, "5.3+");
+  });
+
+  it("clears stale plugin import summary when no engine exports are available", async () => {
+    const controller = createStudioController({
+      projectId: "prj_unreal",
+      token: "tok_1",
+      fetcher: async (url) => {
+        if (url.endsWith("/export-wizard")) {
+          return jsonResponse({ export_preview: { target_engine: "previewed" } });
+        }
+        if (url.endsWith("/exports?engine=unreal")) {
+          return jsonResponse({
+            exports: [
+              {
+                id: "exp_unreal",
+                engine: "unreal",
+                engine_version: "5.3+",
+                status: "ready",
+                name: "Unreal Wizard HUD unreal",
+                entry: {
+                  type: "umg_widget_blueprint",
+                  path: "Unreal/Content/GameUIAgent/Widgets/WBP_UnrealWizardHud.uasset"
+                },
+                manifest_url: "/api/plugin/exports/exp_unreal/manifest",
+                download_url: "/api/plugin/exports/exp_unreal/download"
+              }
+            ]
+          });
+        }
+        if (url.endsWith("/exports?engine=cocos3")) {
+          return jsonResponse({ exports: [] });
+        }
+        if (url.endsWith("/import-logs")) {
+          return jsonResponse({
+            export_id: "exp_unreal",
+            engine: "unreal",
+            summary: { umg_widgets_created: 1 },
+            latest_log: null,
+            logs: []
+          });
+        }
+        return jsonResponse(studioStateDto(url.endsWith("/exports?engine=cocos3") ? "cocos3" : "unreal"));
+      }
+    });
+
+    await controller.load();
+    await controller.previewExport("unreal");
+    await controller.previewExport("cocos3");
+
+    assert.equal(controller.getState().pluginExports?.length, 0);
+    assert.equal(controller.getState().pluginImportSummary, undefined);
   });
 });
 

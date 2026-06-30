@@ -5,10 +5,16 @@ import {
   type StudioApiFetcher,
   type StudioApiState
 } from "./studio-api";
-import { fetchPluginProjectExports, type PluginProjectExport } from "./plugin-api";
+import {
+  fetchPluginImportLogs,
+  fetchPluginProjectExports,
+  type PluginImportLogSummary,
+  type PluginProjectExport
+} from "./plugin-api";
 
 export type StudioControllerAction = "apply-correction" | "export-package";
 export type StudioControllerPluginExport = PluginProjectExport;
+export type StudioControllerPluginImportSummary = PluginImportLogSummary;
 
 export type StudioControllerState = {
   phase: "idle" | "loading" | "ready" | "error";
@@ -16,6 +22,7 @@ export type StudioControllerState = {
   error?: string;
   studio?: StudioApiState;
   pluginExports?: StudioControllerPluginExport[];
+  pluginImportSummary?: StudioControllerPluginImportSummary;
 };
 
 export type StudioController = {
@@ -57,7 +64,8 @@ export function createStudioController(options: {
         phase: "error",
         error: error instanceof Error ? error.message : "Studio action failed",
         studio: state.studio,
-        pluginExports: state.pluginExports
+        pluginExports: state.pluginExports,
+        pluginImportSummary: state.pluginImportSummary
       });
     }
   };
@@ -87,7 +95,10 @@ export function createStudioController(options: {
           ...options,
           engine: targetEngine
         });
-        return { phase: "ready", studio, pluginExports };
+          const pluginImportSummary = pluginExports[0]
+            ? await fetchPluginImportLogs({ ...options, exportId: pluginExports[0].id })
+            : undefined;
+          return { phase: "ready", studio, pluginExports, pluginImportSummary };
       });
     }
   };
