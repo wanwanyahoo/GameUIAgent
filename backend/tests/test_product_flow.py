@@ -3278,3 +3278,57 @@ def test_worker_dequeue_and_task_completion_flow(tmp_path):
     completed = complete_response.json()
     assert completed["queue_item"]["status"] == "succeeded"
     assert completed["job"]["status"] == "succeeded"
+
+
+def test_billing_credits_recharge_and_deduction_flow(tmp_path):
+    configure_persistent_store(str(tmp_path / "billing.sqlite3"))
+    configure_object_storage(str(tmp_path / "billing-objects"))
+
+    email = f"billing-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "Billing User"})
+    login_response = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login_response.json()['access_token']}"}
+
+    billing_before = client.get("/api/user/billing", headers=headers).json()
+    assert billing_before["credits"]["purchased"] == 0
+    assert billing_before["credits"]["total_available"] == 120
+
+    recharge_response = client.post(
+        "/api/user/billing/recharge",
+        headers=headers,
+        json={
+            "amount": 100,
+            "method": "stripe",
+            "transaction_id": f"txn_{uuid4().hex}",
+        },
+    )
+    assert recharge_response.status_code == 200
+    recharged = recharge_response.json()
+    assert recharged["credits"]["purchased"] == 100
+    assert recharged["credits"]["total_available"] == 220
+
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Billing Test Project",
+            "target_engine": "unity",
+            "canvas": {"width": 1024, "height": 768},
+        },
+    ).json()
+
+    job_response = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "text-to-image",
+            "prompt": "test",
+            "execution_mode": "inline",
+        },
+    )
+    assert job_response.status_code == 201
+    job = job_response.json()
+    assert "cost_credits" in job
+
+    billing_after = client.get("/api/user/billing", headers=headers).json()
+    assert billing_after["credits"]["total_available"] == 220 - job.get("cost_credits", 0)

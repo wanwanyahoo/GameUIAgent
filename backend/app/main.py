@@ -843,6 +843,7 @@ def create_ai_job(
     reference_asset = require_optional_project_asset(project, payload.reference_asset_id)
     mask_asset = require_optional_project_asset(project, payload.mask_asset_id)
     estimated_credits = estimate_ai_job_credits(payload)
+    usage = deduct_credits(user, f"ai_{payload.kind}", estimated_credits)
     job = {
         "id": make_id("job"),
         "project_id": project["id"],
@@ -860,6 +861,8 @@ def create_ai_job(
             "size": payload.size,
         },
         "estimated_credits": estimated_credits,
+        "cost_credits": estimated_credits,
+        "billing_usage": usage,
         "execution_mode": payload.execution_mode,
         "status": "queued" if payload.execution_mode == "queued" else "running",
         "progress": 0 if payload.execution_mode == "queued" else 50,
@@ -1441,6 +1444,28 @@ def create_api_key(payload: ApiKeyRequest, user: dict[str, Any] = Depends(curren
 @app.get("/api/user/billing")
 def get_billing(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     account = billing_account_for(user)
+    return format_billing_account(account)
+
+
+class RechargeRequest(BaseModel):
+    amount: int = Field(gt=0)
+    method: str = Field(pattern="^(stripe|paypal|alipay|wechat)$")
+    transaction_id: str
+
+
+@app.post("/api/user/billing/recharge")
+def recharge_credits(payload: RechargeRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    account = billing_account_for(user)
+    account["credits"]["purchased"] += payload.amount
+    store.flush()
+    append_audit_event(
+        None,
+        "billing_recharge",
+        user["id"],
+        "billing",
+        user["id"],
+        metadata={"amount": payload.amount, "method": payload.method, "transaction_id": payload.transaction_id},
+    )
     return format_billing_account(account)
 
 
