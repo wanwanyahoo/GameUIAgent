@@ -7,6 +7,7 @@ from re import sub
 from secrets import token_hex
 from typing import Any
 from uuid import uuid4
+from zlib import error as ZlibError, decompress
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile, status
@@ -188,6 +189,7 @@ store: ProductionStore = create_production_store()
 object_storage: LocalObjectStorage = create_object_storage()
 worker_token: str | None = getenv("GAMEUIAGENT_WORKER_TOKEN")
 inference_provider_name = getenv("GAMEUIAGENT_INFERENCE_PROVIDER", "local-deterministic")
+MAX_PNG_ALPHA_SEGMENTATION_PIXELS = 2048 * 2048
 
 
 def configure_persistent_store(db_path: str) -> None:
@@ -1716,6 +1718,9 @@ def complete_ai_job(
 def build_segmentation_slices(project: dict[str, Any], asset: dict[str, Any]) -> list[dict[str, Any]]:
     width = asset.get("metadata", {}).get("width", project["canvas"]["width"])
     height = asset.get("metadata", {}).get("height", project["canvas"]["height"])
+    pixel_slices = build_png_alpha_component_slices(asset)
+    if pixel_slices:
+        return pixel_slices
     return [
         {
             "id": "slice_panel_main",
@@ -1742,6 +1747,169 @@ def build_segmentation_slices(project: dict[str, Any], asset: dict[str, Any]) ->
             "rect": {"x": int(width * 0.17), "y": int(height * 0.15), "width": int(width * 0.32), "height": int(height * 0.07)},
         },
     ]
+
+
+def build_png_alpha_component_slices(asset: dict[str, Any]) -> list[dict[str, Any]]:
+    rgba = decode_stored_png_rgba(asset)
+    if not rgba:
+        return []
+    width = rgba["width"]
+    height = rgba["height"]
+    pixels = rgba["pixels"]
+    visited: set[tuple[int, int]] = set()
+    components: list[dict[str, int]] = []
+    for y in range(height):
+        for x in range(width):
+            if (x, y) in visited or not png_pixel_is_opaque(pixels, width, x, y):
+                continue
+            components.append(flood_fill_png_alpha_component(pixels, width, height, x, y, visited))
+    components.sort(key=lambda rect: (rect["y"], rect["x"]))
+    return [
+        {
+            "id": f"slice_alpha_component_{index + 1}",
+            "type": "image",
+            "name": f"Alpha Component {index + 1}",
+            "confidence": 0.93,
+            "editable_bounds": True,
+            "segmentation_source": "png-alpha-components",
+            "rect": rect,
+        }
+        for index, rect in enumerate(components[:64])
+    ]
+
+
+def decode_stored_png_rgba(asset: dict[str, Any]) -> dict[str, Any] | None:
+    storage_key = asset.get("metadata", {}).get("storage_key")
+    if not storage_key:
+        return None
+    try:
+        content = object_storage.path_for(storage_key).read_bytes()
+    except (RuntimeError, ValueError, OSError):
+        return None
+    return decode_png_rgba(content)
+
+
+def decode_png_rgba(content: bytes) -> dict[str, Any] | None:
+    if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+    cursor = 8
+    width = 0
+    height = 0
+    idat_chunks: list[bytes] = []
+    while cursor + 8 <= len(content):
+        length = read_uint(content[cursor : cursor + 4])
+        chunk_type = content[cursor + 4 : cursor + 8]
+        payload_start = cursor + 8
+        payload_end = payload_start + length
+        if payload_end + 4 > len(content):
+            return None
+        payload = content[payload_start:payload_end]
+        cursor = payload_end + 4
+        if chunk_type == b"IHDR":
+            if (
+                len(payload) < 13
+                or payload[8] != 8
+                or payload[9] != 6
+                or payload[10] != 0
+                or payload[11] != 0
+                or payload[12] != 0
+            ):
+                return None
+            width = read_uint(payload[0:4])
+            height = read_uint(payload[4:8])
+        elif chunk_type == b"IDAT":
+            idat_chunks.append(payload)
+        elif chunk_type == b"IEND":
+            break
+    if width <= 0 or height <= 0 or not idat_chunks:
+        return None
+    if width * height > MAX_PNG_ALPHA_SEGMENTATION_PIXELS:
+        return None
+    try:
+        raw = decompress(b"".join(idat_chunks))
+    except ZlibError:
+        return None
+    pixels = unfilter_png_rgba_scanlines(raw, width, height)
+    if pixels is None:
+        return None
+    return {"width": width, "height": height, "pixels": pixels}
+
+
+def unfilter_png_rgba_scanlines(raw: bytes, width: int, height: int) -> bytes | None:
+    bytes_per_pixel = 4
+    stride = width * bytes_per_pixel
+    expected = height * (stride + 1)
+    if len(raw) < expected:
+        return None
+    previous = bytearray(stride)
+    pixels = bytearray()
+    cursor = 0
+    for _ in range(height):
+        filter_type = raw[cursor]
+        cursor += 1
+        row = bytearray(raw[cursor : cursor + stride])
+        cursor += stride
+        for index, value in enumerate(row):
+            left = row[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            up = previous[index]
+            upper_left = previous[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            if filter_type == 1:
+                row[index] = (value + left) & 0xFF
+            elif filter_type == 2:
+                row[index] = (value + up) & 0xFF
+            elif filter_type == 3:
+                row[index] = (value + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                row[index] = (value + png_paeth_predictor(left, up, upper_left)) & 0xFF
+            elif filter_type != 0:
+                return None
+        pixels.extend(row)
+        previous = row
+    return bytes(pixels)
+
+
+def png_paeth_predictor(left: int, up: int, upper_left: int) -> int:
+    estimate = left + up - upper_left
+    left_distance = abs(estimate - left)
+    up_distance = abs(estimate - up)
+    upper_left_distance = abs(estimate - upper_left)
+    if left_distance <= up_distance and left_distance <= upper_left_distance:
+        return left
+    if up_distance <= upper_left_distance:
+        return up
+    return upper_left
+
+
+def png_pixel_is_opaque(pixels: bytes, width: int, x: int, y: int) -> bool:
+    return pixels[((y * width + x) * 4) + 3] > 0
+
+
+def flood_fill_png_alpha_component(
+    pixels: bytes,
+    width: int,
+    height: int,
+    start_x: int,
+    start_y: int,
+    visited: set[tuple[int, int]],
+) -> dict[str, int]:
+    stack = [(start_x, start_y)]
+    visited.add((start_x, start_y))
+    min_x = max_x = start_x
+    min_y = max_y = start_y
+    while stack:
+        x, y = stack.pop()
+        min_x = min(min_x, x)
+        max_x = max(max_x, x)
+        min_y = min(min_y, y)
+        max_y = max(max_y, y)
+        for next_x, next_y in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if not (0 <= next_x < width and 0 <= next_y < height):
+                continue
+            if (next_x, next_y) in visited or not png_pixel_is_opaque(pixels, width, next_x, next_y):
+                continue
+            visited.add((next_x, next_y))
+            stack.append((next_x, next_y))
+    return {"x": min_x, "y": min_y, "width": max_x - min_x + 1, "height": max_y - min_y + 1}
 
 
 def build_slices_from_ir(ir: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1777,6 +1945,7 @@ def build_ir_from_asset_segmentation(project: dict[str, Any], asset: dict[str, A
             "rect": item["rect"],
             "source_asset_id": asset["id"],
             "confidence": item["confidence"],
+            **({"segmentation_source": item["segmentation_source"]} if item.get("segmentation_source") else {}),
         }
         for item in slices
     )
@@ -1793,6 +1962,11 @@ def build_ir_from_asset_segmentation(project: dict[str, Any], asset: dict[str, A
             **(
                 {"detected_dimensions": asset["metadata"]["detected_dimensions"]}
                 if asset.get("metadata", {}).get("detected_dimensions")
+                else {}
+            ),
+            **(
+                {"segmentation_source": "png-alpha-components"}
+                if any(item.get("segmentation_source") == "png-alpha-components" for item in slices)
                 else {}
             ),
         },

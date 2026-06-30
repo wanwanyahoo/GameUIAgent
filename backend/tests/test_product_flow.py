@@ -1,4 +1,6 @@
+from binascii import crc32
 from uuid import uuid4
+from zlib import compress
 
 from fastapi.testclient import TestClient
 
@@ -8,6 +10,7 @@ from app.main import (
     configure_object_storage,
     configure_persistent_store,
     configure_worker_token,
+    decode_png_rgba,
     store,
 )
 from app.persistence import create_production_store
@@ -227,6 +230,32 @@ def minimal_png_header(width: int, height: int) -> bytes:
         + b"\x08\x06\x00\x00\x00"
         + b"\x00\x00\x00\x00"
     )
+
+
+def png_chunk(chunk_type: bytes, payload: bytes) -> bytes:
+    return len(payload).to_bytes(4, "big") + chunk_type + payload + crc32(chunk_type + payload).to_bytes(4, "big")
+
+
+def rgba_png_with_opaque_rects(width: int, height: int, rects: list[dict[str, int]]) -> bytes:
+    rows: list[bytes] = []
+    for y in range(height):
+        row = bytearray([0])
+        for x in range(width):
+            alpha = 0
+            for rect in rects:
+                inside_x = rect["x"] <= x < rect["x"] + rect["width"]
+                inside_y = rect["y"] <= y < rect["y"] + rect["height"]
+                if inside_x and inside_y:
+                    alpha = 255
+                    break
+            row.extend([255, 255, 255, alpha])
+        rows.append(bytes(row))
+    ihdr = (
+        width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x08\x06\x00\x00\x00"
+    )
+    return b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", ihdr) + png_chunk(b"IDAT", compress(b"".join(rows))) + png_chunk(b"IEND", b"")
 
 
 def auth_headers() -> dict[str, str]:
@@ -1257,6 +1286,72 @@ def test_uploaded_png_segmentation_uses_detected_binary_dimensions(tmp_path):
     assert uploaded["metadata"]["detected_dimensions"] == {"width": 320, "height": 180, "format": "png"}
     assert segmentation["slices"][0]["rect"] == {"x": 38, "y": 21, "width": 243, "height": 125}
     assert segmentation["ir"]["source_asset"]["detected_dimensions"]["format"] == "png"
+
+
+def test_uploaded_png_segmentation_uses_alpha_connected_components(tmp_path):
+    configure_persistent_store(str(tmp_path / "png-alpha-components.sqlite3"))
+    configure_object_storage(str(tmp_path / "png-alpha-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Pixel Slice UI",
+            "target_engine": "unity",
+            "canvas": {"width": 32, "height": 20},
+        },
+    ).json()
+    png_bytes = rgba_png_with_opaque_rects(
+        32,
+        20,
+        [
+            {"x": 2, "y": 3, "width": 5, "height": 4},
+            {"x": 20, "y": 11, "width": 7, "height": 6},
+        ],
+    )
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "alpha-components.png",
+            "type": "reference_image",
+            "width": "32",
+            "height": "20",
+            "usage": "source_ui",
+        },
+        files={"file": ("alpha-components.png", png_bytes, "image/png")},
+    ).json()
+
+    segmentation = client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": uploaded["id"]},
+    ).json()
+
+    assert [item["rect"] for item in segmentation["slices"]] == [
+        {"x": 2, "y": 3, "width": 5, "height": 4},
+        {"x": 20, "y": 11, "width": 7, "height": 6},
+    ]
+    assert [item["type"] for item in segmentation["slices"]] == ["image", "image"]
+    assert segmentation["ir"]["nodes"][1]["rect"] == {"x": 2, "y": 3, "width": 5, "height": 4}
+    assert segmentation["ir"]["source_asset"]["segmentation_source"] == "png-alpha-components"
+
+
+def test_png_alpha_decoder_rejects_oversized_pixel_maps():
+    width = 2048
+    height = 2049
+    oversized_raw = b"".join(b"\x00" + (b"\x00\x00\x00\x00" * width) for _ in range(height))
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(
+            b"IHDR",
+            width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x06\x00\x00\x00",
+        )
+        + png_chunk(b"IDAT", compress(oversized_raw))
+        + png_chunk(b"IEND", b"")
+    )
+
+    assert decode_png_rgba(png_bytes) is None
 
 
 def test_uploaded_asset_and_ai_job_reject_invalid_production_bounds():
