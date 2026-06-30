@@ -442,10 +442,11 @@ describe("studio API client", () => {
 
     assert.deepEqual(calls, [
       { action: "slice", assetId: "ast_generated" },
+      { action: "slice", assetId: "ast_generated" },
       { action: "export", targetEngine: "unity" },
     ]);
     assert.equal(slice.message, "Generated asset sent to layered slice");
-    assert.equal(exported.message, "Generated asset export package generated");
+    assert.equal(exported.message, "Generated asset sliced and export package generated");
   });
 
   it("enriches generated assets with project asset metadata", () => {

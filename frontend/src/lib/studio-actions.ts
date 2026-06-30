@@ -118,12 +118,17 @@ export async function runGeneratedAssetAction(options: RunGeneratedAssetActionOp
   }
 
   if (options.actionId === "export-generated-asset") {
+    await clients.createSegmentation({
+      projectId,
+      token: options.token,
+      assetId: options.assetId,
+    });
     const result = await clients.previewExport({
       projectId,
       token: options.token,
       targetEngine: options.studio.export_wizard.target_engine || options.project.target_engine,
     });
-    return { status: "ok", message: "Generated asset export package generated", result };
+    return { status: "ok", message: "Generated asset sliced and export package generated", result };
   }
 
   throw new Error(`Unsupported generated asset action: ${options.actionId}`);
