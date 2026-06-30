@@ -104,5 +104,6 @@ describe("App", () => {
     assert.match(html, /Apply Correction/);
     assert.match(html, /Export Wizard/);
     assert.match(html, /Select Target Engine/);
+    assert.match(html, /Synced via Studio API/);
   });
 });

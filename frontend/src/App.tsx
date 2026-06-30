@@ -135,6 +135,7 @@ export function App() {
         <div className="studio-ops">
           <div className="panel action-dock">
             <h3>Action Dock</h3>
+            <small>Synced via Studio API</small>
             <p>Selected layer: {studioActiveSelection.selectedLayerId}</p>
             <div className="control-row">
               {studioActionDock.map((action) => (
