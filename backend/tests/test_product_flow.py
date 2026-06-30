@@ -2,7 +2,14 @@ from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
-from app.main import app, configure_object_storage, configure_persistent_store, configure_worker_token, store
+from app.main import (
+    app,
+    configure_inference_provider,
+    configure_object_storage,
+    configure_persistent_store,
+    configure_worker_token,
+    store,
+)
 from app.persistence import create_production_store
 
 
@@ -503,6 +510,98 @@ def test_ai_worker_endpoint_requires_configured_worker_token(tmp_path):
         configure_worker_token(None)
 
 
+def test_ai_worker_uses_configured_inference_provider_and_persists_run(tmp_path):
+    db_path = tmp_path / "inference-provider.sqlite3"
+    configure_persistent_store(str(db_path))
+    configure_inference_provider("local-deterministic")
+    try:
+        headers = auth_headers()
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={
+                "name": "Inference Provider Project",
+                "target_engine": "unity",
+                "canvas": {"width": 1280, "height": 720},
+            },
+        ).json()
+        job = client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={
+                "kind": "text_to_image",
+                "prompt": "production inference provider HUD",
+                "model": "game-ui-xl",
+                "seed": 77,
+                "count": 1,
+                "execution_mode": "queued",
+            },
+        ).json()
+
+        worker_response = client.post("/api/system/ai-worker/run-next")
+
+        assert worker_response.status_code == 200
+        completed = worker_response.json()["job"]
+        assert completed["status"] == "succeeded"
+        assert completed["inference"]["provider"] == "local-deterministic"
+        assert completed["result_asset"]["url"].startswith("/inference/local-deterministic/")
+        assert completed["result_asset"]["metadata"]["inference_run_id"] == completed["inference"]["run_id"]
+
+        reloaded_store = create_production_store()
+        reloaded_store.configure(str(db_path))
+        inference_run = reloaded_store["inference_runs"][completed["inference"]["run_id"]]
+        assert inference_run["request"]["prompt"] == "production inference provider HUD"
+        assert inference_run["request"]["model"] == "game-ui-xl"
+        assert inference_run["response"]["asset_url"] == completed["result_asset"]["url"]
+        assert "inference_provider" in client.get("/api/system/production-readiness").json()["checks"]
+    finally:
+        configure_inference_provider("local-deterministic")
+
+
+def test_ai_worker_marks_job_failed_when_inference_provider_fails(tmp_path):
+    db_path = tmp_path / "inference-failure.sqlite3"
+    configure_persistent_store(str(db_path))
+    configure_inference_provider("failing")
+    try:
+        headers = auth_headers()
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={
+                "name": "Inference Failure Project",
+                "target_engine": "unity",
+                "canvas": {"width": 1280, "height": 720},
+            },
+        ).json()
+        job = client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={
+                "kind": "text_to_image",
+                "prompt": "provider failure should not fake success",
+                "execution_mode": "queued",
+            },
+        ).json()
+
+        worker_response = client.post("/api/system/ai-worker/run-next")
+
+        assert worker_response.status_code == 200
+        failed = worker_response.json()["job"]
+        assert failed["id"] == job["id"]
+        assert failed["status"] == "failed"
+        assert failed["progress"] == 0
+        assert failed["error"] == "Inference provider failed"
+        assert worker_response.json()["queue"]["status"] == "failed"
+        assert "result_asset" not in failed
+
+        reloaded_store = create_production_store()
+        reloaded_store.configure(str(db_path))
+        assert reloaded_store["jobs"][job["id"]]["status"] == "failed"
+        assert reloaded_store["ai_job_queue"][job["queue"]["id"]]["status"] == "failed"
+    finally:
+        configure_inference_provider("local-deterministic")
+
+
 def test_professional_import_source_submission_creates_parser_job():
     headers = auth_headers()
     project = client.post(
@@ -599,7 +698,18 @@ def test_uploaded_asset_and_ai_job_reject_invalid_production_bounds():
         },
     )
 
+    excessive_job_response = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "text_to_image",
+            "prompt": "too many paid provider candidates",
+            "count": 5,
+        },
+    )
+
     assert invalid_job_response.status_code == 422
+    assert excessive_job_response.status_code == 422
 
 
 def test_project_asset_library_supports_search_update_copy_delete_and_versions():

@@ -8,6 +8,7 @@ from secrets import token_hex
 from typing import Any
 from uuid import uuid4
 
+import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -84,7 +85,7 @@ class AiJobRequest(BaseModel):
     negative_prompt: str | None = None
     seed: int | None = None
     model: str | None = None
-    count: int = Field(default=1, ge=1)
+    count: int = Field(default=1, ge=1, le=4)
     execution_mode: str = "inline"
 
 
@@ -177,6 +178,7 @@ class PluginAuthRequest(BaseModel):
 store: ProductionStore = create_production_store()
 object_storage: LocalObjectStorage = create_object_storage()
 worker_token: str | None = getenv("GAMEUIAGENT_WORKER_TOKEN")
+inference_provider_name = getenv("GAMEUIAGENT_INFERENCE_PROVIDER", "local-deterministic")
 
 
 def configure_persistent_store(db_path: str) -> None:
@@ -190,6 +192,11 @@ def configure_object_storage(root_path: str) -> None:
 def configure_worker_token(token: str | None) -> None:
     global worker_token
     worker_token = token
+
+
+def configure_inference_provider(provider_name: str) -> None:
+    global inference_provider_name
+    inference_provider_name = provider_name
 
 
 production_store_path = getenv("GAMEUIAGENT_STORE_DB")
@@ -271,11 +278,17 @@ def production_readiness() -> dict[str, Any]:
             "ephemeral": not object_durable,
             "root": str(object_storage.root) if object_storage.root else None,
         },
+        "inference": {
+            "provider": inference_provider_name,
+            "configured": inference_provider_configured(),
+            "qwen_endpoint": qwen_inference_endpoint() if inference_provider_name == "qwen" else None,
+        },
         "checks": [
             "durable_store" if durable else "ephemeral_store",
             "object_storage" if object_durable else "missing_object_storage",
             "ai_job_queue",
             "worker_auth" if worker_token else "missing_worker_auth",
+            "inference_provider" if inference_provider_configured() else "missing_inference_provider",
             "salted_password_hashes",
             "project_ownership_guards",
             "engine_manifest_contracts",
@@ -692,11 +705,18 @@ def run_next_ai_worker_job(_worker_authorized: bool = Depends(require_worker_tok
     queue_item["attempts"] += 1
     job["status"] = "running"
     job["progress"] = 50
-    complete_ai_job(project, job)
-    queue_item["status"] = "succeeded"
+    try:
+        complete_ai_job(project, job, run_inference_provider(project, job))
+        queue_item["status"] = "succeeded"
+    except RuntimeError as exc:
+        queue_item["status"] = "failed"
+        queue_item["error"] = str(exc)
+        job["status"] = "failed"
+        job["progress"] = 0
+        job["error"] = str(exc)
     job["queue"] = queue_item
     store.flush()
-    return {"status": "processed", "job": job, "queue": queue_item}
+    return {"status": "processed" if job["status"] == "succeeded" else "failed", "job": job, "queue": queue_item}
 
 
 @app.post("/api/projects/{project_id}/segmentations", status_code=status.HTTP_201_CREATED)
@@ -1528,15 +1548,112 @@ def validate_ai_execution_mode(execution_mode: str) -> None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported AI execution mode")
 
 
-def complete_ai_job(project: dict[str, Any], job: dict[str, Any]) -> None:
+def inference_provider_configured() -> bool:
+    if inference_provider_name == "qwen":
+        return bool(getenv("QWEN_API_KEY"))
+    return inference_provider_name == "local-deterministic"
+
+
+def qwen_inference_endpoint() -> str:
+    return getenv("QWEN_IMAGE_ENDPOINT", "https://dashscope.aliyuncs.com/compatible-mode/v1/images/generations")
+
+
+def build_inference_request(project: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     input_asset = job.get("input_asset")
+    return {
+        "job_id": job["id"],
+        "project_id": project["id"],
+        "kind": job["kind"],
+        "prompt": job["prompt"],
+        "model": job["parameters"].get("model") or "qwen-image",
+        "seed": job["parameters"].get("seed"),
+        "count": job["parameters"]["count"],
+        "size": job["parameters"]["size"],
+        "canvas": project["canvas"],
+        "input_asset_id": input_asset["id"] if input_asset else None,
+    }
+
+
+def run_inference_provider(project: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    request = build_inference_request(project, job)
+    run = {
+        "id": make_id("inf"),
+        "job_id": job["id"],
+        "project_id": project["id"],
+        "provider": inference_provider_name,
+        "status": "running",
+        "request": request,
+    }
+    store["inference_runs"][run["id"]] = run
+    try:
+        if inference_provider_name == "failing":
+            raise RuntimeError("Inference provider failed")
+        if inference_provider_name == "qwen":
+            response = call_qwen_inference(request)
+        elif inference_provider_name == "local-deterministic":
+            response = {
+                "asset_url": f"/inference/local-deterministic/{job['id']}.png",
+                "provider_job_id": f"local-{job['id']}",
+            }
+        else:
+            raise RuntimeError("Inference provider is not configured")
+    except RuntimeError as exc:
+        run["status"] = "failed"
+        run["error"] = str(exc)
+        store.flush()
+        raise
+    run["status"] = "succeeded"
+    run["response"] = response
+    store.flush()
+    return {"run_id": run["id"], "provider": run["provider"], **response}
+
+
+def call_qwen_inference(request: dict[str, Any]) -> dict[str, Any]:
+    api_key = getenv("QWEN_API_KEY")
+    if not api_key:
+        raise RuntimeError("Inference provider is not configured")
+    try:
+        response = httpx.post(
+            qwen_inference_endpoint(),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": request["model"],
+                "prompt": request["prompt"],
+                "n": request["count"],
+                "size": "1024x1024",
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise RuntimeError("Inference provider failed") from exc
+    asset_url = (
+        (payload.get("data") or [{}])[0].get("url")
+        or (payload.get("output", {}).get("results") or [{}])[0].get("url")
+    )
+    if not asset_url:
+        raise RuntimeError("Inference provider returned no asset URL")
+    return {
+        "asset_url": asset_url,
+        "provider_job_id": payload.get("id") or payload.get("request_id"),
+    }
+
+
+def complete_ai_job(
+    project: dict[str, Any],
+    job: dict[str, Any],
+    inference_result: dict[str, Any] | None = None,
+) -> None:
+    input_asset = job.get("input_asset")
+    asset_url = inference_result["asset_url"] if inference_result else f"/generated/{project['id']}/{job['kind']}.png"
     asset = {
         "id": make_id("ast"),
         "project_id": project["id"],
         "type": "generated_image",
         "name": f"{project['name']} generated concept",
         "prompt": job["prompt"],
-        "url": f"/generated/{project['id']}/{job['kind']}.png",
+        "url": asset_url,
         "size": job["parameters"]["size"],
         "source": "ai",
         "metadata": {
@@ -1546,6 +1663,8 @@ def complete_ai_job(project: dict[str, Any], job: dict[str, Any]) -> None:
             "input_asset_id": input_asset["id"] if input_asset else None,
             "model": job["parameters"].get("model"),
             "execution_mode": job["execution_mode"],
+            "inference_provider": inference_result["provider"] if inference_result else "inline-local",
+            "inference_run_id": inference_result["run_id"] if inference_result else None,
         },
     }
     store["assets"][asset["id"]] = asset
@@ -1556,6 +1675,12 @@ def complete_ai_job(project: dict[str, Any], job: dict[str, Any]) -> None:
     job["status"] = "succeeded"
     job["progress"] = 100
     job["result_asset"] = asset
+    if inference_result:
+        job["inference"] = {
+            "run_id": inference_result["run_id"],
+            "provider": inference_result["provider"],
+            "provider_job_id": inference_result.get("provider_job_id"),
+        }
 
 
 def build_segmentation_slices(project: dict[str, Any], asset: dict[str, Any]) -> list[dict[str, Any]]:

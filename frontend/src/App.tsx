@@ -116,9 +116,14 @@ const productionRuntimeChecks = [
     detail: "Queued AI jobs call /api/system/ai-worker/run-next with worker auth and move through queued -> running -> succeeded."
   },
   {
+    title: "Qwen inference provider",
+    endpoint: "GAMEUIAGENT_INFERENCE_PROVIDER=qwen / QWEN_API_KEY",
+    detail: "Worker inference calls persist request and response metadata into inference_runs before attaching result assets."
+  },
+  {
     title: "Readiness checks",
-    endpoint: "durable_store / object_storage / ai_job_queue",
-    detail: "Runtime checks expose storage durability, object storage, queued AI processing and ownership safeguards."
+    endpoint: "durable_store / object_storage / inference_provider",
+    detail: "Runtime checks expose storage durability, object storage, queued AI processing, inference provider and ownership safeguards."
   }
 ] as const;
 

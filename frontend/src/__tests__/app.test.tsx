@@ -183,6 +183,10 @@ describe("App", () => {
     assert.match(html, /GAMEUIAGENT_WORKER_TOKEN/);
     assert.match(html, /X-Worker-Token/);
     assert.match(html, /queued -&gt; running -&gt; succeeded/);
+    assert.match(html, /Qwen inference provider/);
+    assert.match(html, /GAMEUIAGENT_INFERENCE_PROVIDER=qwen/);
+    assert.match(html, /QWEN_API_KEY/);
+    assert.match(html, /inference_runs/);
     assert.match(html, /\/api\/system\/production-readiness/);
     assert.match(html, /No in-memory-only data loss/);
   });
