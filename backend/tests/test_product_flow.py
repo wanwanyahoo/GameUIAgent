@@ -125,6 +125,43 @@ def minimal_psd_with_advanced_layers(width: int, height: int) -> bytes:
     )
 
 
+def minimal_psd_with_closed_group(width: int, height: int) -> bytes:
+    layer_records = [
+        psd_layer_record(
+            "Group",
+            {"x": 0, "y": 0, "width": width, "height": height},
+            unicode_name="商店弹窗组",
+            section_divider=1,
+        ),
+        psd_layer_record(
+            "Smart",
+            {"x": 48, "y": 64, "width": 180, "height": 96},
+            unicode_name="购买按钮智能对象",
+            smart_object=True,
+        ),
+        psd_layer_record(
+            "Group End",
+            {"x": 0, "y": 0, "width": 0, "height": 0},
+            section_divider=3,
+        ),
+        psd_layer_record(
+            "Badge",
+            {"x": 420, "y": 20, "width": 48, "height": 48},
+            unicode_name="外部角标",
+        ),
+    ]
+    channel_pixels = b"\x00\x00" * len(layer_records)
+    layer_info = len(layer_records).to_bytes(2, "big") + b"".join(layer_records) + channel_pixels
+    layer_mask_section = len(layer_info).to_bytes(4, "big") + layer_info
+    return (
+        minimal_psd_header(width, height)
+        + (0).to_bytes(4, "big")
+        + (0).to_bytes(4, "big")
+        + len(layer_mask_section).to_bytes(4, "big")
+        + layer_mask_section
+    )
+
+
 def minimal_png_header(width: int, height: int) -> bytes:
     return (
         b"\x89PNG\r\n\x1a\n"
@@ -936,6 +973,96 @@ def test_professional_import_source_preserves_psd_unicode_groups_and_smart_objec
     assert imported["ir"]["nodes"][1]["professional_source"]["is_group"] is True
     assert imported["ir"]["nodes"][2]["type"] == "component"
     assert imported["ir"]["nodes"][2]["professional_source"]["smart_object"] is True
+
+
+def test_professional_import_source_reconstructs_psd_group_hierarchy(tmp_path):
+    configure_persistent_store(str(tmp_path / "psd-hierarchy.sqlite3"))
+    configure_object_storage(str(tmp_path / "psd-hierarchy-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Hierarchical PSD UI",
+            "target_engine": "unity",
+            "canvas": {"width": 512, "height": 256},
+        },
+    ).json()
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "hierarchical-hud.psd",
+            "type": "psd",
+            "width": "512",
+            "height": "256",
+            "usage": "professional_import",
+        },
+        files={"file": ("hierarchical-hud.psd", minimal_psd_with_advanced_layers(512, 256), "image/vnd.adobe.photoshop")},
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": uploaded["id"],
+            "parser": "psd-binary-header",
+        },
+    )
+
+    assert source_response.status_code == 201
+    imported = source_response.json()
+    group_layer, child_layer = imported["design_document"]["layers"]
+    assert child_layer["parent_id"] == group_layer["id"]
+    assert child_layer["group_path"] == ["商店弹窗组"]
+    assert imported["ir"]["nodes"][2]["parent_id"] == group_layer["id"]
+    assert imported["ir"]["nodes"][2]["professional_source"]["group_path"] == ["商店弹窗组"]
+
+
+def test_professional_import_source_does_not_parent_layers_after_psd_group_end(tmp_path):
+    configure_persistent_store(str(tmp_path / "psd-closed-group.sqlite3"))
+    configure_object_storage(str(tmp_path / "psd-closed-group-objects"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Closed PSD Group UI",
+            "target_engine": "unity",
+            "canvas": {"width": 512, "height": 256},
+        },
+    ).json()
+    uploaded = client.post(
+        f"/api/projects/{project['id']}/assets/upload",
+        headers=headers,
+        data={
+            "name": "closed-group-hud.psd",
+            "type": "psd",
+            "width": "512",
+            "height": "256",
+            "usage": "professional_import",
+        },
+        files={"file": ("closed-group-hud.psd", minimal_psd_with_closed_group(512, 256), "image/vnd.adobe.photoshop")},
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": uploaded["id"],
+            "parser": "psd-binary-header",
+        },
+    )
+
+    assert source_response.status_code == 201
+    imported = source_response.json()
+    group_layer, child_layer, badge_layer = imported["design_document"]["layers"]
+    assert [layer["name"] for layer in imported["design_document"]["layers"]] == ["商店弹窗组", "购买按钮智能对象", "外部角标"]
+    assert child_layer["parent_id"] == group_layer["id"]
+    assert "parent_id" not in badge_layer
+    assert "group_path" not in imported["ir"]["nodes"][3]["professional_source"]
 
 
 def test_uploaded_png_segmentation_uses_detected_binary_dimensions(tmp_path):

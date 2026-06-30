@@ -121,6 +121,8 @@ class ProfessionalLayer(BaseModel):
     name: str
     kind: str
     rect: dict[str, int]
+    parent_id: str | None = None
+    group_path: list[str] | None = None
     text: str | None = None
     component_key: str | None = None
     auto_layout: dict[str, Any] | None = None
@@ -1934,6 +1936,7 @@ def parse_psd_layer_records(source_asset: dict[str, Any], source_type: str) -> l
     layer_count = abs(int.from_bytes(layer_info[0:2], "big", signed=True))
     cursor = 2
     layers: list[ProfessionalLayer] = []
+    group_stack: list[ProfessionalLayer] = []
     for index in range(layer_count):
         if cursor + 18 > len(layer_info):
             return []
@@ -1961,21 +1964,30 @@ def parse_psd_layer_records(source_asset: dict[str, Any], source_type: str) -> l
         cursor += extra_length
         metadata = parse_psd_layer_metadata(extra_data)
         name = metadata.get("name") or f"Layer {index + 1}"
-        is_group = metadata.get("is_group") is True
+        section_divider_type = metadata.get("section_divider_type")
+        if section_divider_type == 3:
+            if group_stack:
+                group_stack.pop()
+            continue
+        is_group = section_divider_type in {1, 2}
         smart_object = metadata.get("smart_object") is True
         kind = "group" if is_group else "component" if smart_object else "image"
-        layers.append(
-            ProfessionalLayer(
-                id=f"psd_layer_{index + 1}_{sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower() or 'layer'}",
-                name=name,
-                kind=kind,
-                rect={"x": left, "y": top, "width": max(right - left, 0), "height": max(bottom - top, 0)},
-                opacity=round(opacity_byte / 255, 3),
-                visible=(flags & 2) == 0,
-                is_group=is_group,
-                smart_object=smart_object,
-            )
+        layer = ProfessionalLayer(
+            id=f"psd_layer_{index + 1}_{sub(r'[^a-zA-Z0-9]+', '_', name).strip('_').lower() or 'layer'}",
+            name=name,
+            kind=kind,
+            rect={"x": left, "y": top, "width": max(right - left, 0), "height": max(bottom - top, 0)},
+            opacity=round(opacity_byte / 255, 3),
+            visible=(flags & 2) == 0,
+            is_group=is_group,
+            smart_object=smart_object,
         )
+        if group_stack:
+            layer.parent_id = group_stack[-1].id
+            layer.group_path = [group.name for group in group_stack]
+        if layer.is_group:
+            group_stack.append(layer)
+        layers.append(layer)
     return layers
 
 
@@ -2012,7 +2024,8 @@ def parse_psd_layer_metadata(extra_data: bytes) -> dict[str, Any]:
             metadata["name"] = unicode_bytes.decode("utf-16-be", errors="ignore")
         elif key == b"lsct" and len(payload) >= 4:
             section_type = read_uint(payload[0:4])
-            metadata["is_group"] = section_type in {1, 2, 3}
+            metadata["section_divider_type"] = section_type
+            metadata["is_group"] = section_type in {1, 2}
         elif key in {b"SoLd", b"SoLE", b"SoCo"}:
             metadata["smart_object"] = True
     return metadata
@@ -2045,7 +2058,7 @@ def build_design_document(project: dict[str, Any], payload: ProfessionalImportRe
         "parser": payload.parser,
         "binary_header": payload.binary_header,
         "preserved_layers": len(payload.layers),
-        "layers": [layer.model_dump() for layer in payload.layers],
+        "layers": [layer.model_dump(exclude_none=True) for layer in payload.layers],
     }
 
 
@@ -2081,6 +2094,10 @@ def build_ir_from_design_document(project: dict[str, Any], document: dict[str, A
             node["opacity"] = layer["opacity"]
         if layer.get("visible") is not None:
             node["visible"] = layer["visible"]
+        if layer.get("parent_id"):
+            node["parent_id"] = layer["parent_id"]
+        if layer.get("group_path"):
+            node["professional_source"]["group_path"] = layer["group_path"]
         if layer.get("is_group") is not None:
             node["professional_source"]["is_group"] = layer["is_group"]
         if layer.get("smart_object") is not None:
