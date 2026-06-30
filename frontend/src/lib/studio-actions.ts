@@ -44,6 +44,7 @@ export async function runStudioAction(options: RunStudioActionOptions): Promise<
         prompt: `Regenerate production-ready game UI for ${options.project.name}`,
         referenceAssetId: options.studio.active_selection.selected_asset_id,
         count: 1,
+        executionMode: "queued",
       },
     });
     return { status: "ok", message: "AI regeneration job created", result };

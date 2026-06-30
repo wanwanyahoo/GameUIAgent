@@ -183,7 +183,8 @@ describe("studio API client", () => {
         negativePrompt: "blur",
         seed: 7,
         model: "game-ui-xl",
-        count: 2
+        count: 2,
+        executionMode: "queued"
       }
     });
     const segmentation = await createStudioSegmentation({
@@ -202,7 +203,8 @@ describe("studio API client", () => {
       negative_prompt: "blur",
       seed: 7,
       model: "game-ui-xl",
-      count: 2
+      count: 2,
+      execution_mode: "queued"
     }));
     assert.equal(asset.metadata.width, 1920);
     assert.equal(assets[0]?.id, "ast_upload");

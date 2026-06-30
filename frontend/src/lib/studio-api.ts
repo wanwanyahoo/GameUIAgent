@@ -307,6 +307,7 @@ export async function createStudioAiJob(options: {
     seed?: number;
     model?: string;
     count?: number;
+    executionMode?: "inline" | "queued";
   };
   fetcher?: StudioApiFetcher;
 }): Promise<StudioAiJob> {
@@ -319,7 +320,8 @@ export async function createStudioAiJob(options: {
     negative_prompt: options.job.negativePrompt,
     seed: options.job.seed,
     model: options.job.model,
-    count: options.job.count
+    count: options.job.count,
+    execution_mode: options.job.executionMode
   };
   const response = await requestStudioApi(
     `/api/projects/${options.projectId}/ai/jobs`,
