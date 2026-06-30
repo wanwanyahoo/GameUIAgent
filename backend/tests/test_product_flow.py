@@ -902,6 +902,20 @@ def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkey
         assert segmentation["ir"]["nodes"][1]["name"] == "Generated Panel"
         assert segmentation["ir"]["source_asset"]["segmentation_source"] == "qwen-layered-slice"
 
+        studio_response = client.get(f"/api/projects/{project['id']}/studio", headers=headers)
+        assert studio_response.status_code == 200
+        layered_summary = studio_response.json()["layered_slice_summary"]
+        assert layered_summary["source"] == "qwen-layered-slice"
+        assert layered_summary["slice_count"] == 2
+        assert layered_summary["editable_node_count"] == 2
+        assert layered_summary["nodes"][1] == {
+            "id": "qwen_cta_button",
+            "type": "button",
+            "name": "Generated CTA Button",
+            "rect": {"x": 220, "y": 330, "width": 180, "height": 72},
+            "editable_bounds": True,
+        }
+
         export_response = client.post(
             f"/api/projects/{project['id']}/exports",
             headers=headers,

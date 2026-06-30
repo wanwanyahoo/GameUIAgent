@@ -1427,8 +1427,7 @@ def apply_correction_to_latest_ir(project: dict[str, Any], correction: dict[str,
 def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
     studio = store["studio_states"].get(project["id"])
     if studio:
-        studio["timeline"] = build_studio_timeline(project, studio["export_wizard"]["target_engine"])
-        return studio
+        return refresh_studio_runtime_state(project, studio)
     ir = latest_project_ir(project) or build_demo_ir(project)
     button_node = next((node for node in ir["nodes"] if node["type"] == "button"), ir["nodes"][0])
     studio = {
@@ -1473,8 +1472,47 @@ def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
             ],
         },
     }
+    apply_studio_layered_slice_summary(studio, ir)
     store["studio_states"][project["id"]] = studio
     return studio
+
+
+def refresh_studio_runtime_state(project: dict[str, Any], studio: dict[str, Any]) -> dict[str, Any]:
+    studio["timeline"] = build_studio_timeline(project, studio["export_wizard"]["target_engine"])
+    apply_studio_layered_slice_summary(studio, latest_project_ir(project))
+    return studio
+
+
+def apply_studio_layered_slice_summary(studio: dict[str, Any], ir: dict[str, Any] | None) -> None:
+    summary = build_studio_layered_slice_summary(ir)
+    if summary:
+        studio["layered_slice_summary"] = summary
+    else:
+        studio.pop("layered_slice_summary", None)
+
+
+def build_studio_layered_slice_summary(ir: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not ir or ir.get("source_asset", {}).get("segmentation_source") != "qwen-layered-slice":
+        return None
+    nodes = [
+        {
+            "id": node["id"],
+            "type": node["type"],
+            "name": node["name"],
+            "rect": node["rect"],
+            "editable_bounds": True,
+        }
+        for node in ir.get("nodes", [])
+        if node.get("segmentation_source") == "qwen-layered-slice"
+    ]
+    if not nodes:
+        return None
+    return {
+        "source": "qwen-layered-slice",
+        "slice_count": len(nodes),
+        "editable_node_count": len(nodes),
+        "nodes": nodes,
+    }
 
 
 def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
