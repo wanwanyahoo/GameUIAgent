@@ -510,8 +510,20 @@ a {
   margin-top: 1rem;
 }
 
+.completeness {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  align-items: center;
+  margin-top: 1rem;
+  border-color: rgba(215, 255, 102, 0.32);
+}
+
 .core-chain h3 {
   margin: 0.35rem 0 0;
+}
+
+.completeness h3 {
+  margin: 0.35rem 0;
 }
 
 .workflow-step,

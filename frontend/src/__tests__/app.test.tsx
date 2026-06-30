@@ -130,4 +130,15 @@ describe("App", () => {
     assert.match(html, /Unity plugin import/);
     assert.match(html, /Studio timeline synced/);
   });
+
+  it("renders the remaining completeness gaps for follow-up loops", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Completeness Status/);
+    assert.match(html, /Core engine chain: verified/);
+    assert.match(html, /Remaining gaps/);
+    assert.match(html, /team roles/);
+    assert.match(html, /password reset/);
+    assert.match(html, /docs center/);
+  });
 });

@@ -511,6 +511,93 @@ def test_core_psd_to_unity_plugin_import_chain_is_connected():
     assert timeline[3]["summary"]["prefabs_created"] == 1
 
 
+def test_core_psd_asset_ir_reaches_all_engine_plugin_imports():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "PSD Multi Engine Chain",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    imported = client.post(
+        f"/api/projects/{project['id']}/imports/professional",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "file_name": "multi-engine-hud.psd",
+            "layers": [
+                {
+                    "id": "layer_panel",
+                    "name": "Main Panel",
+                    "kind": "image",
+                    "rect": {"x": 0, "y": 0, "width": 1920, "height": 1080},
+                },
+                {
+                    "id": "layer_start_button",
+                    "name": "Start Button",
+                    "kind": "image",
+                    "rect": {"x": 760, "y": 820, "width": 400, "height": 120},
+                },
+                {
+                    "id": "layer_start_text",
+                    "name": "Start Text",
+                    "kind": "text",
+                    "text": "START",
+                    "rect": {"x": 820, "y": 850, "width": 280, "height": 60},
+                },
+            ],
+        },
+    ).json()
+
+    cases = [
+        ("cocos3", "create_scene", {"prefabs_created": 1, "scenes_created": 1, "warnings": 0, "errors": 0}),
+        ("cocos2", "create_prefab", {"prefabs_created": 1, "warnings": 0, "errors": 0}),
+        ("godot", "write_tscn_scene", {"scenes_created": 1, "controls_created": 4, "warnings": 0, "errors": 0}),
+        ("unreal", "create_umg_widget_blueprint", {"umg_widgets_created": 1, "textures_created": 1, "warnings": 0, "errors": 0}),
+    ]
+    for engine, expected_step, summary in cases:
+        export_response = client.post(
+            f"/api/projects/{project['id']}/exports",
+            headers=headers,
+            json={"ir_id": imported["ir"]["id"], "target_engine": engine},
+        )
+        assert export_response.status_code == 201
+        export = export_response.json()
+
+        manifest_response = client.get(f"/api/plugin/exports/{export['id']}/manifest", headers=headers)
+        assert manifest_response.status_code == 200
+        manifest = manifest_response.json()
+        assert manifest["engine"] == engine
+        assert manifest["professional_source"]["source_type"] == "psd"
+        assert manifest["professional_source"]["file_name"] == "multi-engine-hud.psd"
+        assert manifest["professional_source"]["preserved_layers"] == 3
+        assert manifest["asset_ir"]["node_count"] == 4
+        assert expected_step in manifest["import_plan"]["steps"]
+
+        log_response = client.post(
+            "/api/plugin/import-logs",
+            headers=headers,
+            json={
+                "export_id": export["id"],
+                "engine": engine,
+                "status": "succeeded",
+                "plugin_version": "0.3.0",
+                "engine_version": manifest["engine_version"],
+                "duration_ms": 4300,
+                "summary": summary,
+                "logs": [{"level": "info", "message": f"Imported {engine} package"}],
+            },
+        )
+        assert log_response.status_code == 201
+
+        import_logs = client.get(f"/api/plugin/exports/{export['id']}/import-logs", headers=headers).json()
+        assert import_logs["engine"] == engine
+        assert import_logs["latest_log"]["summary"] == summary
+
+
 def test_figma_import_preserves_component_and_auto_layout_metadata():
     headers = auth_headers()
     project = client.post(

@@ -32,6 +32,11 @@ const coreChainSelfTest = [
   "Unity plugin import",
   "Studio timeline synced"
 ] as const;
+const remainingCompletenessGaps = [
+  "team roles",
+  "password reset",
+  "docs center"
+] as const;
 
 export function App() {
   return (
@@ -213,6 +218,18 @@ export function App() {
           <div className="control-row">
             {coreChainSelfTest.map((step) => (
               <b key={step}>{step}</b>
+            ))}
+          </div>
+        </div>
+        <div className="completeness panel">
+          <div>
+            <p className="eyebrow">Completeness Status</p>
+            <h3>Core engine chain: verified</h3>
+            <small>Remaining gaps</small>
+          </div>
+          <div className="control-row">
+            {remainingCompletenessGaps.map((gap) => (
+              <b key={gap}>{gap}</b>
             ))}
           </div>
         </div>

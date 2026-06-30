@@ -1165,6 +1165,8 @@ def build_engine_manifest(
         "download_url": "",
         "checksum": f"sha256:{engine}-{safe_slug(project['name']).lower()}",
         "assets": [{"path": file_path, "kind": engine_asset_kind(file_path)} for file_path in files],
+        "professional_source": build_manifest_professional_source(ir),
+        "asset_ir": build_manifest_asset_ir_summary(ir),
         "import_plan": import_plan,
     }
 
