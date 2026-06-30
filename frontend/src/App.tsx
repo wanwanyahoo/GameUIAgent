@@ -126,45 +126,187 @@ const productionRuntimeChecks = [
     detail: "Runtime checks expose storage durability, object storage, queued AI processing, inference provider and ownership safeguards."
   }
 ] as const;
+const vberProductCards = [
+  {
+    title: "Art to engine AI Studio",
+    body: "从 PSD、Figma 类设计稿或游戏项目加载场景与预制体，在 AI 画布中创作、编辑、优化并导回引擎。",
+    label: "Flagship"
+  },
+  {
+    title: "Engine automation Engine MCP",
+    body: "让 AI 进入 Unity、Cocos Creator 2.x / 3.x、Godot、Unreal，执行编码、场景、预制体、资源和调试任务。",
+    label: "Backbone"
+  },
+  {
+    title: "Quick services AI 超强抠图",
+    body: "高精度 AI 超强抠图工具，让美术资源准备更快、更轻松。",
+    label: "Utility"
+  }
+] as const;
+const vberTokenSteps = [
+  {
+    index: "01",
+    eyebrow: "导入来源",
+    title: "导入设计与项目资产",
+    detail: "从 PSD、Figma 类设计稿、场景、预制体、UI、图片和游戏项目中导入生产素材。",
+    tags: ["PSD 分层稿", "Figma 类设计", "项目资产"]
+  },
+  {
+    index: "02",
+    eyebrow: "AI Studio",
+    title: "AI Studio 创作与优化",
+    detail: "在 AI Studio 中完成游戏资产生成、编辑、精修、结构整理和可交付检查。",
+    tags: ["AI 创建游戏资产", "AI 编辑游戏资产", "AI 优化游戏 UI"]
+  },
+  {
+    index: "03",
+    eyebrow: "引擎交付",
+    title: "导出引擎可用资产",
+    detail: "输出 Unity、Cocos、Godot、Unreal 可导入的 Prefab、Scene、Sprite、UMG 和 Control 资源。",
+    tags: ["Unity Prefab", "Cocos Scene", "Godot Control", "Unreal UMG"]
+  },
+  {
+    index: "04",
+    eyebrow: "自动化落地",
+    title: "AI 自动化开发落地",
+    detail: "通过 Engine MCP 与插件把资源导入、布局替换、Prefab 生成和导入日志连接为闭环。",
+    tags: ["Engine MCP", "插件导入", "任务回写"]
+  }
+] as const;
+const vberStackSteps = [
+  "01 导入设计与项目资产",
+  "02 AI Studio 创作与优化",
+  "03 导出引擎可用资产",
+  "04 AI 自动化开发落地"
+] as const;
+const vberEngineCards = [
+  ["Unity MCP", "unity-mcp", "订阅制"],
+  ["Godot MCP", "godot-mcp", "开源免费"],
+  ["Cocos MCP 3.x", "cocos-mcp-3", "Creator 3.x"],
+  ["Cocos MCP 2.x", "cocos-mcp-2", "Creator 2.x"],
+  ["Unreal MCP", "unreal-mcp", "UMG 扩展"]
+] as const;
 
 export function App() {
   return (
     <main className="app-shell">
-      <header className="nav">
+      <header className="nav vber-nav">
+        <button className="menu-button" type="button" aria-label="open navigation menu">
+          <span />
+          <span />
+        </button>
         <a className="brand" href="#top" aria-label="GameUIAgent home">
           <span className="brand-mark">G</span>
           <span>GameUIAgent</span>
         </a>
         <nav className="nav-links" aria-label="Primary navigation">
-          <a href="#studio">AI Studio</a>
-          <a href="#workflow">Workflow</a>
-          <a href="#engines">Engines</a>
-          <a href="#docs">Docs</a>
-          <a href="#pricing">Pricing</a>
+          <a href="#top">首页</a>
+          <a href="#engine-mcp">游戏引擎 MCP 插件</a>
+          <a href="#vber-studio">AI Studio</a>
+          <a href="#matting">AI 超强抠图</a>
+          <a href="#platform-extension">开发者</a>
         </nav>
-        <a className="nav-cta" href="#studio">
-          Launch Studio
-        </a>
+        <button className="nav-link-button" type="button">探索产品</button>
+        <button className="nav-link-button" type="button">Switch language</button>
+        <button className="nav-link-button" type="button">Switch to light mode</button>
+        <div className="auth-actions">
+          <button type="button">登录</button>
+          <button type="button">注册</button>
+        </div>
       </header>
 
-      <section id="top" className="hero">
-        <div className="hero-copy">
-          <p className="eyebrow">GameUIAgent-inspired production platform</p>
-          <h1>AI Game Asset Production from concept to engine import.</h1>
-          <p className="hero-subtitle">
-            Replicate the official site experience and extend it into a complete AI Studio for
-            game UI generation, slicing, Asset IR, Unity-first export and engine plugin loops.
+      <section id="top" className="vber-hero">
+        <div className="vber-hero-copy">
+          <p className="eyebrow">GAMEUIAGENT / AI GAME DEVELOPMENT SUITE</p>
+          <p className="vber-titleline">GameUIAgent · AI 原生游戏生产力平台</p>
+          <h1>一站式 AI 游戏开发<br />解决方案</h1>
+          <p>
+            GameUIAgent 覆盖从游戏 AI 美术设计到游戏引擎自动化 AI 编程的完整链路：
+            导入 PSD、Figma 类设计稿或游戏项目资产，在 AI Studio 中创作、编辑和优化，
+            再导出为引擎可直接使用的场景、预制体和美术资源，并通过 Engine MCP 完成落地。
           </p>
           <div className="hero-actions">
-            <a className="button primary" href="#studio">
-              Open AI Studio
-            </a>
-            <a className="button secondary" href="#workflow">
-              View Production Chain
-            </a>
+            <a className="button primary" href="#vber-studio">访问 AI Studio</a>
+            <a className="button secondary" href="#pricing">查看平台定价</a>
           </div>
         </div>
+        <div className="vber-product-grid" aria-label="核心产品入口">
+          {vberProductCards.map((product) => (
+            <a className="vber-product-card" href="#platform-extension" key={product.title}>
+              <span>{product.title}</span>
+              <p>{product.body}</p>
+              <b>{product.label}</b>
+            </a>
+          ))}
+        </div>
+      </section>
 
+      <section className="vber-token-section">
+        <div className="vber-token-grid">
+          {vberTokenSteps.map((step) => (
+            <article className="vber-token-card" key={step.index}>
+              <span>{step.index}</span>
+              <small>{step.eyebrow}</small>
+              <h3>{step.title}</h3>
+              <p>{step.detail}</p>
+              <div className="vber-tags">
+                {step.tags.map((tag) => <b key={tag}>{tag}</b>)}
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="vber-token-section vber-matting-section" id="matting">
+        <div className="vber-section-copy">
+          <p className="eyebrow">最佳 AI 工具</p>
+          <h2>AI 超强抠图，<br />现由 GameUIAgent 独家提供</h2>
+          <p>
+            处理常见抠图工具难以抠除的人物发丝、光效、半透材质和复杂边缘，
+            让游戏角色、宣传图和 UI 素材更快进入生产流程。
+          </p>
+          <div className="vber-tags">
+            <b>发丝级边缘</b>
+            <b>光效保留</b>
+            <b>半透材质</b>
+          </div>
+          <a className="button primary" href="#platform-extension">体验 AI 超强抠图</a>
+        </div>
+        <div className="matting-demo" aria-label="AI matting before and after demo">
+          <div>复杂原图</div>
+          <div>透明结果</div>
+        </div>
+      </section>
+
+      <section className="vber-token-section">
+        <div className="vber-section-copy">
+          <p className="eyebrow">GAMEUIAGENT PRODUCTION STACK</p>
+          <h2>重塑游戏开发的 AI 工作流</h2>
+          <p>
+            设计软件、AI Studio、Engine MCP 和 AI 超强抠图不再是孤立工具。
+            GameUIAgent 把游戏资产设计、AI 创作、引擎资产交付、代码编写和引擎操作连接成一条可持续迭代的生产流程。
+          </p>
+        </div>
+        <div className="stack-rail">
+          {vberStackSteps.map((step) => <span key={step}>{step}</span>)}
+        </div>
+      </section>
+
+      <section className="vber-token-section vber-studio-section" id="vber-studio">
+        <div className="vber-section-copy">
+          <p className="eyebrow">AI Studio 平台</p>
+          <h2>游戏原生设计平台<br />连接画布与引擎</h2>
+          <p>
+            从 PSD、Figma 类设计稿或游戏项目中导入素材，还原为可协作的 AI 画布；
+            生成、拆分、编辑和组件化游戏资产，并实时同步回 Unity、Cocos Creator、Godot 或 Unreal。
+          </p>
+          <div className="vber-tags">
+            <b>PSD / Figma / 项目资源导入</b>
+            <b>团队协作 AI 画布</b>
+            <b>素材实时同步到项目</b>
+            <b>AI 生成 UI、原画、动画</b>
+          </div>
+        </div>
         <aside className="hero-console" aria-label="Production console preview">
           <div className="console-topline">
             <span>Unity-first</span>
@@ -186,6 +328,41 @@ export function App() {
           </div>
         </aside>
       </section>
+
+      <section className="vber-token-section" id="engine-mcp" aria-label="让 AI 真正进入 游戏引擎">
+        <div className="vber-section-copy">
+          <p className="eyebrow">核心产品</p>
+          <h2>让 AI 真正进入<br />游戏引擎</h2>
+          <p>
+            让 AI 直接控制 Unity、Cocos Creator 2.x、Cocos Creator 3.x、Godot、Unreal，
+            完成编码、场景编辑、预制体处理、资源管理和调试任务。
+          </p>
+        </div>
+        <div className="engine-product-grid">
+          {vberEngineCards.map(([title, slug, note]) => (
+            <article className="engine-product-card" key={title}>
+              <h3>{title}</h3>
+              <code>{slug}</code>
+              <span>{note}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="vber-token-section vber-action-section" aria-label="让下一次迭代 直接进入引擎">
+        <p className="eyebrow">START</p>
+        <h2>让下一次迭代<br />直接进入引擎</h2>
+        <p>从导入资产开始，把 AI 生成、协作编辑和引擎同步放进一条可控流程。</p>
+        <div className="hero-actions">
+          <a className="button primary" href="#studio">免费注册</a>
+          <a className="button secondary" href="#matting">进入 AI 超强抠图</a>
+          <a className="button secondary" href="#platform-extension">GitHub</a>
+        </div>
+      </section>
+
+      <div id="platform-extension" className="platform-extension-label">
+        <span>GameUIAgent extended production platform</span>
+      </div>
 
       <section className="section" id="studio">
         <div className="section-heading">

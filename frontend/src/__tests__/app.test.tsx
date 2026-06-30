@@ -5,10 +5,32 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { App } from "../App";
 
 describe("App", () => {
+  it("matches the VberAI homepage information architecture with GameUIAgent branding", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /GameUIAgent · AI 原生游戏生产力平台/);
+    assert.match(html, /登录/);
+    assert.match(html, /注册/);
+    assert.match(html, /探索产品/);
+    assert.match(html, /一站式 AI 游戏开发/);
+    assert.match(html, /核心产品/);
+    assert.match(html, /AI 超强抠图/);
+    assert.match(html, /GAMEUIAGENT PRODUCTION STACK/);
+    assert.match(html, /游戏原生设计平台/);
+    assert.match(html, /让 AI 真正进入\s*游戏引擎/);
+    assert.match(html, /让下一次迭代\s*直接进入引擎/);
+
+    assert.ok(html.indexOf("一站式 AI 游戏开发") < html.indexOf("导入来源"));
+    assert.ok(html.indexOf("导入来源") < html.indexOf("最佳 AI 工具"));
+    assert.ok(html.indexOf("最佳 AI 工具") < html.indexOf("GAMEUIAGENT PRODUCTION STACK"));
+    assert.ok(html.indexOf("GAMEUIAGENT PRODUCTION STACK") < html.indexOf("游戏原生设计平台"));
+    assert.ok(html.indexOf("游戏原生设计平台") < html.indexOf("让 AI 真正进入"));
+  });
+
   it("renders the replicated official site and studio entry points", () => {
     const html = renderToStaticMarkup(<App />);
 
-    assert.match(html, /AI Game Asset Production/i);
+    assert.match(html, /一站式 AI 游戏开发/i);
     assert.match(html, /AI Studio/i);
     assert.match(html, /Unity-first/i);
     assert.match(html, /PSD \/ PSB \/ Figma/i);
@@ -83,7 +105,7 @@ describe("App", () => {
     const html = renderToStaticMarkup(<App />);
 
     assert.doesNotMatch(html, /VberAI/);
-    assert.match(html, /GameUIAgent-inspired production platform/);
+    assert.match(html, /GameUIAgent · AI 原生游戏生产力平台/);
     assert.match(html, /GameUIAgent-style marketing portal/);
   });
 
