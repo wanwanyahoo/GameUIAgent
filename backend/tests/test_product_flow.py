@@ -11,6 +11,7 @@ from app.main import (
     configure_persistent_store,
     configure_worker_token,
     decode_png_rgba,
+    extract_qwen_layered_slices,
     store,
 )
 from app.persistence import create_production_store
@@ -798,6 +799,115 @@ def test_ai_worker_uses_configured_inference_provider_and_persists_run(tmp_path)
         assert "inference_provider" in client.get("/api/system/production-readiness").json()["checks"]
     finally:
         configure_inference_provider("local-deterministic")
+
+
+def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkeypatch):
+    db_path = tmp_path / "qwen-layered-slice.sqlite3"
+    configure_persistent_store(str(db_path))
+    configure_inference_provider("qwen")
+    monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
+    captured_payload: dict[str, object] = {}
+
+    class FakeQwenResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "id": "qwen-layered-job-1",
+                "data": [
+                    {
+                        "url": "https://qwen.example/generated-layered-ui.png",
+                        "layered_slices": [
+                            {
+                                "id": "qwen_panel",
+                                "type": "panel",
+                                "name": "Generated Panel",
+                                "rect": {"x": 64, "y": 48, "width": 420, "height": 240},
+                                "confidence": 0.96,
+                            },
+                            {
+                                "id": "qwen_cta_button",
+                                "type": "button",
+                                "name": "Generated CTA Button",
+                                "rect": {"x": 220, "y": 330, "width": 180, "height": 72},
+                                "confidence": 0.94,
+                            },
+                        ],
+                    }
+                ],
+            }
+
+    def fake_qwen_post(*_args, **kwargs):
+        captured_payload.update(kwargs["json"])
+        return FakeQwenResponse()
+
+    monkeypatch.setattr("app.main.httpx.post", fake_qwen_post)
+    try:
+        headers = auth_headers()
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={
+                "name": "Qwen Layered Slice UI",
+                "target_engine": "unity",
+                "canvas": {"width": 640, "height": 480},
+            },
+        ).json()
+        reference_asset = client.post(
+            f"/api/projects/{project['id']}/assets",
+            headers=headers,
+            json={
+                "name": "reference-hud.png",
+                "type": "reference_image",
+                "url": "s3://gameuiagent/reference-hud.png",
+                "width": 640,
+                "height": 480,
+                "usage": "reference_ui",
+            },
+        ).json()
+        job = client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={
+                "kind": "image_to_image",
+                "prompt": "Generate layered sci-fi game shop UI and return layer slices",
+                "reference_asset_id": reference_asset["id"],
+                "model": "qwen-layered-slice",
+                "execution_mode": "queued",
+            },
+        ).json()
+
+        worker_response = client.post("/api/system/ai-worker/run-next")
+
+        assert worker_response.status_code == 200
+        completed = worker_response.json()["job"]
+        assert captured_payload["model"] == "qwen-layered-slice"
+        assert captured_payload["reference_asset"] == {
+            "id": reference_asset["id"],
+            "url": "s3://gameuiagent/reference-hud.png",
+        }
+        assert completed["status"] == "succeeded"
+        assert completed["result_asset"]["metadata"]["layered_slice_provider"] == "qwen"
+        assert completed["result_asset"]["metadata"]["layered_slices"][0]["id"] == "qwen_panel"
+
+        segmentation = client.post(
+            f"/api/projects/{project['id']}/segmentations",
+            headers=headers,
+            json={"asset_id": completed["result_asset"]["id"]},
+        ).json()
+
+        assert [item["id"] for item in segmentation["slices"]] == ["qwen_panel", "qwen_cta_button"]
+        assert segmentation["slices"][1]["rect"] == {"x": 220, "y": 330, "width": 180, "height": 72}
+        assert segmentation["ir"]["nodes"][1]["name"] == "Generated Panel"
+        assert segmentation["ir"]["source_asset"]["segmentation_source"] == "qwen-layered-slice"
+    finally:
+        configure_inference_provider("local-deterministic")
+
+
+def test_qwen_layered_slice_parser_ignores_malformed_provider_shapes():
+    assert extract_qwen_layered_slices({"data": {"layered_slices": "bad-shape"}}) == []
+    assert extract_qwen_layered_slices({"output": {"results": {"layered_slices": []}}}) == []
 
 
 def test_ai_worker_marks_job_failed_when_inference_provider_fails(tmp_path):

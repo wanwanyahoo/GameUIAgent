@@ -744,7 +744,10 @@ def create_segmentation(
     asset = store["assets"].get(payload.asset_id)
     if not asset or asset["project_id"] != project["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
-    if asset.get("source") == "ai":
+    if asset.get("source") == "ai" and asset.get("metadata", {}).get("layered_slices"):
+        ir = build_ir_from_layered_asset_segmentation(project, asset)
+        slices = build_layered_asset_slices(asset)
+    elif asset.get("source") == "ai":
         ir = build_demo_ir(project)
         slices = build_slices_from_ir(ir)
     else:
@@ -1592,6 +1595,7 @@ def qwen_inference_endpoint() -> str:
 
 def build_inference_request(project: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     input_asset = job.get("input_asset")
+    reference_asset = job.get("reference_asset")
     return {
         "job_id": job["id"],
         "project_id": project["id"],
@@ -1603,6 +1607,11 @@ def build_inference_request(project: dict[str, Any], job: dict[str, Any]) -> dic
         "size": job["parameters"]["size"],
         "canvas": project["canvas"],
         "input_asset_id": input_asset["id"] if input_asset else None,
+        "reference_asset": (
+            {"id": reference_asset["id"], "url": reference_asset["url"]}
+            if reference_asset
+            else None
+        ),
     }
 
 
@@ -1653,6 +1662,8 @@ def call_qwen_inference(request: dict[str, Any]) -> dict[str, Any]:
                 "prompt": request["prompt"],
                 "n": request["count"],
                 "size": "1024x1024",
+                "response_format": "url_with_layered_slices",
+                **({"reference_asset": request["reference_asset"]} if request.get("reference_asset") else {}),
             },
             timeout=60,
         )
@@ -1669,7 +1680,65 @@ def call_qwen_inference(request: dict[str, Any]) -> dict[str, Any]:
     return {
         "asset_url": asset_url,
         "provider_job_id": payload.get("id") or payload.get("request_id"),
+        "layered_slices": extract_qwen_layered_slices(payload),
     }
+
+
+def extract_qwen_layered_slices(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = [
+        payload.get("layered_slices"),
+        first_payload_item(payload.get("data")).get("layered_slices"),
+        first_payload_item(payload.get("output", {}).get("results")).get("layered_slices"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, list):
+            return normalize_layered_slices(candidate, source="qwen-layered-slice")
+    return []
+
+
+def first_payload_item(value: Any) -> dict[str, Any]:
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return value[0]
+    return {}
+
+
+def normalize_layered_slices(raw_slices: list[Any], source: str) -> list[dict[str, Any]]:
+    slices: list[dict[str, Any]] = []
+    for index, raw_slice in enumerate(raw_slices[:64]):
+        if not isinstance(raw_slice, dict) or not isinstance(raw_slice.get("rect"), dict):
+            continue
+        rect = normalize_slice_rect(raw_slice["rect"])
+        if not rect:
+            continue
+        slice_type = raw_slice.get("type") if isinstance(raw_slice.get("type"), str) else "image"
+        name = raw_slice.get("name") if isinstance(raw_slice.get("name"), str) else f"Layered Slice {index + 1}"
+        slice_id = raw_slice.get("id") if isinstance(raw_slice.get("id"), str) else f"layered_slice_{index + 1}"
+        confidence = raw_slice.get("confidence") if isinstance(raw_slice.get("confidence"), (int, float)) else 0.9
+        slices.append(
+            {
+                "id": slice_id,
+                "type": slice_type,
+                "name": name,
+                "rect": rect,
+                "confidence": max(0.0, min(float(confidence), 1.0)),
+                "editable_bounds": True,
+                "segmentation_source": source,
+            }
+        )
+    return slices
+
+
+def normalize_slice_rect(rect: dict[str, Any]) -> dict[str, int] | None:
+    try:
+        x = int(rect["x"])
+        y = int(rect["y"])
+        width = int(rect["width"])
+        height = int(rect["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0 or x < 0 or y < 0:
+        return None
+    return {"x": x, "y": y, "width": width, "height": height}
 
 
 def complete_ai_job(
@@ -1678,7 +1747,9 @@ def complete_ai_job(
     inference_result: dict[str, Any] | None = None,
 ) -> None:
     input_asset = job.get("input_asset")
+    reference_asset = job.get("reference_asset")
     asset_url = inference_result["asset_url"] if inference_result else f"/generated/{project['id']}/{job['kind']}.png"
+    layered_slices = inference_result.get("layered_slices", []) if inference_result else []
     asset = {
         "id": make_id("ast"),
         "project_id": project["id"],
@@ -1693,10 +1764,12 @@ def complete_ai_job(
             "height": project["canvas"]["height"],
             "usage": job["kind"],
             "input_asset_id": input_asset["id"] if input_asset else None,
+            "reference_asset_id": reference_asset["id"] if reference_asset else None,
             "model": job["parameters"].get("model"),
             "execution_mode": job["execution_mode"],
             "inference_provider": inference_result["provider"] if inference_result else "inline-local",
             "inference_run_id": inference_result["run_id"] if inference_result else None,
+            **({"layered_slice_provider": inference_result["provider"], "layered_slices": layered_slices} if layered_slices else {}),
         },
     }
     store["assets"][asset["id"]] = asset
@@ -1925,6 +1998,53 @@ def build_slices_from_ir(ir: dict[str, Any]) -> list[dict[str, Any]]:
         for node in ir["nodes"]
         if node["type"] != "canvas"
     ]
+
+
+def build_layered_asset_slices(asset: dict[str, Any]) -> list[dict[str, Any]]:
+    return normalize_layered_slices(
+        asset.get("metadata", {}).get("layered_slices", []),
+        source="qwen-layered-slice",
+    )
+
+
+def build_ir_from_layered_asset_segmentation(project: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:
+    slices = build_layered_asset_slices(asset)
+    nodes = [
+        {
+            "id": "root",
+            "type": "canvas",
+            "name": project["name"],
+            "rect": {"x": 0, "y": 0, "width": project["canvas"]["width"], "height": project["canvas"]["height"]},
+        }
+    ]
+    nodes.extend(
+        {
+            "id": item["id"],
+            "type": item["type"],
+            "name": item["name"],
+            "rect": item["rect"],
+            "source_asset_id": asset["id"],
+            "confidence": item["confidence"],
+            "segmentation_source": item["segmentation_source"],
+        }
+        for item in slices
+    )
+    return {
+        "id": make_id("ir"),
+        "project_id": project["id"],
+        "version": "0.1.0",
+        "engine_targets": ["unity", "cocos", "godot", "unreal"],
+        "canvas": project["canvas"],
+        "source_asset": {
+            "id": asset["id"],
+            "type": asset["type"],
+            "name": asset["name"],
+            "segmentation_source": "qwen-layered-slice",
+            "inference_provider": asset.get("metadata", {}).get("inference_provider"),
+            "inference_run_id": asset.get("metadata", {}).get("inference_run_id"),
+        },
+        "nodes": nodes,
+    }
 
 
 def build_ir_from_asset_segmentation(project: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:
