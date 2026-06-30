@@ -19,6 +19,7 @@ import {
   updateStudioAsset
 } from "../lib/studio-api";
 import { runGeneratedAssetAction, runStudioAction } from "../lib/studio-actions";
+import { collectGeneratedAssets } from "../lib/studio-generated-assets";
 
 describe("studio API client", () => {
   it("maps backend studio state into frontend camelCase models", async () => {
@@ -445,6 +446,49 @@ describe("studio API client", () => {
     ]);
     assert.equal(slice.message, "Generated asset sent to layered slice");
     assert.equal(exported.message, "Generated asset export package generated");
+  });
+
+  it("enriches generated assets with project asset metadata", () => {
+    const generated = collectGeneratedAssets({
+      aiJobs: [
+        {
+          id: "job_1",
+          projectId: "prj_1",
+          kind: "text_to_image",
+          prompt: "generate battle HUD",
+          status: "succeeded",
+          progress: 100,
+          executionMode: "queued",
+          resultAsset: { id: "ast_generated" },
+          candidates: [{ assetId: "ast_generated", rank: 1, score: 0.97 }],
+          estimatedCredits: 2,
+        },
+      ],
+      assets: [
+        {
+          id: "ast_generated",
+          projectId: "prj_1",
+          type: "generated_image",
+          name: "Battle HUD Generated.png",
+          url: "/api/projects/prj_1/assets/ast_generated/download",
+          source: "qwen",
+          metadata: {
+            width: 1536,
+            height: 864,
+            usage: "layered_slice",
+            tags: ["generated", "hud"],
+          },
+        },
+      ],
+    });
+
+    assert.equal(generated[0]?.id, "ast_generated");
+    assert.equal(generated[0]?.name, "Battle HUD Generated.png");
+    assert.equal(generated[0]?.url, "/api/projects/prj_1/assets/ast_generated/download");
+    assert.equal(generated[0]?.width, 1536);
+    assert.equal(generated[0]?.height, 864);
+    assert.equal(generated[0]?.usage, "layered_slice");
+    assert.deepEqual(generated[0]?.tags, ["generated", "hud"]);
   });
 });
 

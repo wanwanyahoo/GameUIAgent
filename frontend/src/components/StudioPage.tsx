@@ -3,6 +3,7 @@ import { useAuth } from "../lib/auth-context";
 import { getStudioStateApi, getProjectApi, type StudioState, type Project } from "../lib/projects-api";
 import { navigateTo } from "../lib/hash-router";
 import { runGeneratedAssetAction, runStudioAction } from "../lib/studio-actions";
+import { collectGeneratedAssets } from "../lib/studio-generated-assets";
 import {
   fetchPluginExportDownload,
   fetchPluginProjectExports,
@@ -11,8 +12,10 @@ import {
 } from "../lib/plugin-api";
 import {
   cancelStudioAiJob,
+  listStudioAssets,
   listStudioAiJobs,
   retryStudioAiJob,
+  type StudioAsset,
   type StudioAiJob,
 } from "../lib/studio-api";
 
@@ -28,15 +31,6 @@ type TimelineTask = {
   type: string;
 };
 
-type GeneratedStudioAsset = {
-  id: string;
-  sourceJobId: string;
-  sourceKind: string;
-  prompt: string;
-  rank?: number;
-  score?: number;
-};
-
 export function StudioPage({ projectId }: StudioPageProps) {
   const { token, user } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
@@ -46,6 +40,7 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [isPolling, setIsPolling] = useState(false);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [assets, setAssets] = useState<StudioAsset[]>([]);
   const [aiJobs, setAiJobs] = useState<StudioAiJob[]>([]);
   const [activeJobActionId, setActiveJobActionId] = useState<string | null>(null);
   const [exportsList, setExportsList] = useState<PluginProjectExport[]>([]);
@@ -68,15 +63,17 @@ export function StudioPage({ projectId }: StudioPageProps) {
       try {
         if (showLoading) setLoading(true);
         setError(null);
-        const [proj, state, jobs, exports] = await Promise.all([
+        const [proj, state, projectAssets, jobs, exports] = await Promise.all([
           getProjectApi(authToken, projectId),
           getStudioStateApi(authToken, projectId),
+          listStudioAssets({ projectId, token: authToken }),
           listStudioAiJobs({ projectId, token: authToken }),
           fetchPluginProjectExports({ projectId, engine: "all", token: authToken }),
         ]);
         if (cancelled) return;
         setProject(proj);
         setStudio(state);
+        setAssets(projectAssets);
         setAiJobs(jobs);
         setExportsList(exports);
       } catch (err: any) {
@@ -134,7 +131,7 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const activeTasks = tasks.filter((task) => task.status === "queued" || task.status === "processing" || task.status === "running");
   const completedTasks = tasks.filter((task) => task.status === "completed" || task.status === "succeeded" || task.status === "failed" || task.status === "ready");
   const liveStatus = isPolling ? "live" : "idle";
-  const generatedAssets = collectGeneratedAssets(aiJobs);
+  const generatedAssets = collectGeneratedAssets({ aiJobs, assets });
 
   const handleStudioAction = async (actionId: string) => {
     if (!token || !project || !studio || activeActionId) return;
@@ -144,12 +141,14 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setActionMessage(null);
       const result = await runStudioAction({ actionId, token, project, studio });
       setActionMessage(result.message);
-      const [latestStudio, latestJobs, latestExports] = await Promise.all([
+      const [latestStudio, latestAssets, latestJobs, latestExports] = await Promise.all([
         getStudioStateApi(token, project.id),
+        listStudioAssets({ projectId: project.id, token }),
         listStudioAiJobs({ projectId: project.id, token }),
         fetchPluginProjectExports({ projectId: project.id, engine: "all", token }),
       ]);
       setStudio(latestStudio);
+      setAssets(latestAssets);
       setAiJobs(latestJobs);
       setExportsList(latestExports);
     } catch (err: any) {
@@ -210,12 +209,14 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setActionMessage(null);
       const result = await runGeneratedAssetAction({ actionId, assetId, token, project, studio });
       setActionMessage(result.message);
-      const [latestStudio, latestJobs, latestExports] = await Promise.all([
+      const [latestStudio, latestAssets, latestJobs, latestExports] = await Promise.all([
         getStudioStateApi(token, project.id),
+        listStudioAssets({ projectId: project.id, token }),
         listStudioAiJobs({ projectId: project.id, token }),
         fetchPluginProjectExports({ projectId: project.id, engine: "all", token }),
       ]);
       setStudio(latestStudio);
+      setAssets(latestAssets);
       setAiJobs(latestJobs);
       setExportsList(latestExports);
     } catch (err: any) {
@@ -382,7 +383,13 @@ export function StudioPage({ projectId }: StudioPageProps) {
                       <span className="studio-job-kind">{asset.sourceKind}</span>
                       {asset.rank !== undefined && <span className="studio-job-status">rank {asset.rank}</span>}
                     </div>
-                    <p className="studio-job-prompt">{asset.prompt}</p>
+                    <p className="studio-job-prompt">{asset.name || asset.prompt}</p>
+                    {(asset.width && asset.height) || asset.usage ? (
+                      <p className="studio-asset-meta">
+                        {asset.width && asset.height ? `${asset.width}x${asset.height}` : "unknown size"}
+                        {asset.usage ? ` | ${asset.usage}` : ""}
+                      </p>
+                    ) : null}
                     <p className="studio-asset-id">{asset.id}</p>
                     <div className="studio-job-actions">
                       <button
@@ -471,35 +478,4 @@ export function StudioPage({ projectId }: StudioPageProps) {
       </div>
     </div>
   );
-}
-
-function collectGeneratedAssets(aiJobs: StudioAiJob[]): GeneratedStudioAsset[] {
-  const assets = new Map<string, GeneratedStudioAsset>();
-
-  aiJobs
-    .filter((job) => job.status === "succeeded")
-    .forEach((job) => {
-      if (job.resultAsset?.id) {
-        assets.set(job.resultAsset.id, {
-          id: job.resultAsset.id,
-          sourceJobId: job.id,
-          sourceKind: job.kind,
-          prompt: job.prompt,
-        });
-      }
-
-      job.candidates.forEach((candidate) => {
-        if (!candidate.assetId || assets.has(candidate.assetId)) return;
-        assets.set(candidate.assetId, {
-          id: candidate.assetId,
-          sourceJobId: job.id,
-          sourceKind: job.kind,
-          prompt: job.prompt,
-          rank: candidate.rank,
-          score: candidate.score,
-        });
-      });
-    });
-
-  return Array.from(assets.values());
 }

@@ -4908,6 +4908,14 @@ a {
   overflow-wrap: anywhere;
 }
 
+.studio-asset-meta {
+  margin: 0 0 0.35rem;
+  color: rgba(232, 247, 255, 0.55);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+}
+
 .studio-job-actions {
   display: flex;
   gap: 0.45rem;
