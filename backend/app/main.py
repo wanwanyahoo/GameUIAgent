@@ -993,6 +993,8 @@ def build_export_package(project: dict[str, Any], ir: dict[str, Any], target_eng
             "download_url": "",
             "checksum": f"sha256:{slug.lower()}",
             "assets": [{"path": file_path, "kind": unity_asset_kind(file_path)} for file_path in files],
+            "professional_source": build_manifest_professional_source(ir),
+            "asset_ir": build_manifest_asset_ir_summary(ir),
             "unity_import_plan": {
                 "root": "Assets/GameUIAgent",
                 "steps": [
@@ -1114,6 +1116,32 @@ def build_export_package(project: dict[str, Any], ir: dict[str, Any], target_eng
             "download_url": "",
             "checksum": f"sha256:{target_engine}-{slug.lower()}",
         },
+    }
+
+
+def build_manifest_professional_source(ir: dict[str, Any]) -> dict[str, Any]:
+    source = ir.get("professional_source") or {}
+    source_type = source.get("source_type", "")
+    preserved_layers = sum(
+        1
+        for node in ir.get("nodes", [])
+        if node.get("professional_source", {}).get("source_type") == source_type
+    )
+    return {
+        "source_type": source_type,
+        "file_name": source.get("file_name", ""),
+        "frame_id": source.get("frame_id"),
+        "design_document_id": source.get("design_document_id", ""),
+        "preserved_layers": preserved_layers,
+    }
+
+
+def build_manifest_asset_ir_summary(ir: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": ir["id"],
+        "version": ir.get("version", ""),
+        "node_count": len(ir.get("nodes", [])),
+        "engine_targets": ir.get("engine_targets", []),
     }
 
 

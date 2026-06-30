@@ -503,6 +503,17 @@ a {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.core-chain {
+  display: grid;
+  grid-template-columns: 1fr 1.6fr;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.core-chain h3 {
+  margin: 0.35rem 0 0;
+}
+
 .workflow-step,
 .capability-card,
 .import-card,

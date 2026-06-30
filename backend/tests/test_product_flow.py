@@ -401,6 +401,116 @@ def test_professional_import_converts_psd_layers_to_asset_ir():
     assert imported["ir"]["nodes"][3]["text"]["content"] == "START"
 
 
+def test_core_psd_to_unity_plugin_import_chain_is_connected():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "PSD Unity Core Chain",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+
+    import_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "file_name": "battle-hud.psd",
+            "layers": [
+                {
+                    "id": "layer_panel",
+                    "name": "Main Panel",
+                    "kind": "image",
+                    "rect": {"x": 120, "y": 160, "width": 1680, "height": 720},
+                },
+                {
+                    "id": "layer_start_button",
+                    "name": "Start Button",
+                    "kind": "image",
+                    "rect": {"x": 760, "y": 820, "width": 400, "height": 120},
+                },
+                {
+                    "id": "layer_start_label",
+                    "name": "Start Label",
+                    "kind": "text",
+                    "text": "START",
+                    "rect": {"x": 835, "y": 850, "width": 250, "height": 60},
+                },
+            ],
+        },
+    )
+    assert import_response.status_code == 201
+    imported = import_response.json()
+    assert imported["ir"]["professional_source"]["source_type"] == "psd"
+
+    export_response = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": imported["ir"]["id"], "target_engine": "unity"},
+    )
+    assert export_response.status_code == 201
+    export = export_response.json()
+    export_id = export["id"]
+
+    manifest_response = client.get(f"/api/plugin/exports/{export_id}/manifest", headers=headers)
+    assert manifest_response.status_code == 200
+    manifest = manifest_response.json()
+    assert manifest["engine"] == "unity"
+    assert manifest["entry"]["path"].endswith("PsdUnityCoreChain.prefab")
+    assert manifest["professional_source"]["source_type"] == "psd"
+    assert manifest["professional_source"]["file_name"] == "battle-hud.psd"
+    assert manifest["professional_source"]["preserved_layers"] == 3
+    assert manifest["asset_ir"]["node_count"] == 4
+    assert manifest["unity_import_plan"]["steps"] == [
+        "extract_zip",
+        "import_textures_as_sprites",
+        "create_prefab",
+        "create_scene",
+        "write_import_log",
+    ]
+
+    download_response = client.get(f"/api/plugin/exports/{export_id}/download", headers=headers)
+    assert download_response.status_code == 200
+    package = download_response.json()
+    assert package["content_type"] == "application/zip"
+    assert package["manifest"]["professional_source"]["file_name"] == "battle-hud.psd"
+    assert "Assets/GameUIAgent/Prefabs/PsdUnityCoreChain.prefab" in package["files"]
+
+    import_log_response = client.post(
+        "/api/plugin/import-logs",
+        headers=headers,
+        json={
+            "export_id": export_id,
+            "engine": "unity",
+            "status": "succeeded",
+            "plugin_version": "0.3.0",
+            "engine_version": "2022.3.40f1",
+            "duration_ms": 4100,
+            "summary": {
+                "assets_imported": 4,
+                "prefabs_created": 1,
+                "scenes_created": 1,
+                "warnings": 0,
+                "errors": 0,
+            },
+            "logs": [{"level": "info", "message": "Imported PSD Unity Core Chain prefab"}],
+        },
+    )
+    assert import_log_response.status_code == 201
+
+    studio_response = client.get(f"/api/projects/{project['id']}/studio", headers=headers)
+    assert studio_response.status_code == 200
+    timeline = studio_response.json()["timeline"]
+    assert timeline[2]["kind"] == "unity_export"
+    assert timeline[2]["status"] == "succeeded"
+    assert timeline[3]["kind"] == "plugin_import"
+    assert timeline[3]["status"] == "succeeded"
+    assert timeline[3]["summary"]["prefabs_created"] == 1
+
+
 def test_figma_import_preserves_component_and_auto_layout_metadata():
     headers = auth_headers()
     project = client.post(

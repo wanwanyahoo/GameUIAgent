@@ -26,6 +26,12 @@ const pluginImportTelemetry = [
   ["slate_slots_bound", 7],
   ["warnings", 1]
 ] as const;
+const coreChainSelfTest = [
+  "PSD layered import",
+  "Unity package export",
+  "Unity plugin import",
+  "Studio timeline synced"
+] as const;
 
 export function App() {
   return (
@@ -198,6 +204,17 @@ export function App() {
               <p>{step.detail}</p>
             </article>
           ))}
+        </div>
+        <div className="core-chain panel">
+          <div>
+            <p className="eyebrow">Core Chain Self-Test</p>
+            <h3>PSD to Unity plugin import path verified by API flow.</h3>
+          </div>
+          <div className="control-row">
+            {coreChainSelfTest.map((step) => (
+              <b key={step}>{step}</b>
+            ))}
+          </div>
         </div>
       </section>
 

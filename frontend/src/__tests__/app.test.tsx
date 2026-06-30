@@ -120,4 +120,14 @@ describe("App", () => {
     assert.match(html, /umg_widgets_created/);
     assert.match(html, /slate_slots_bound/);
   });
+
+  it("renders the verified PSD to Unity plugin core chain", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Core Chain Self-Test/);
+    assert.match(html, /PSD layered import/);
+    assert.match(html, /Unity package export/);
+    assert.match(html, /Unity plugin import/);
+    assert.match(html, /Studio timeline synced/);
+  });
 });
