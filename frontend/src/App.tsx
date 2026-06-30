@@ -55,6 +55,28 @@ const docsCenterGuides = [
   "Developer API",
   "Engine Plugins"
 ] as const;
+const uploadToSliceChain = [
+  {
+    title: "Uploaded Asset API",
+    endpoint: "/api/projects/{project_id}/assets",
+    detail: "Register uploaded PNG, PSD, PSB, Figma link, mask and reference images with size metadata."
+  },
+  {
+    title: "Image-to-Image input asset",
+    endpoint: "/api/projects/{project_id}/ai/jobs",
+    detail: "AI jobs now bind input_asset_id, model, seed, negative prompt and candidate outputs."
+  },
+  {
+    title: "Editable slices",
+    endpoint: "/api/projects/{project_id}/segmentations",
+    detail: "Uploaded UI images produce slices, confidence, editable_bounds and Asset IR nodes."
+  },
+  {
+    title: "Professional source parser",
+    endpoint: "/api/projects/{project_id}/imports/professional-sources",
+    detail: "PSD, PSB and Figma sources can submit parser jobs before layer-to-IR conversion."
+  }
+] as const;
 
 export function App() {
   return (
@@ -290,6 +312,23 @@ export function App() {
               ))}
             </div>
           </article>
+        </div>
+      </section>
+
+      <section className="section" id="upload-chain">
+        <div className="section-heading">
+          <p className="eyebrow">Upload-to-Slice Chain</p>
+          <h2>Real project assets now enter generation, slicing and professional import flows.</h2>
+        </div>
+        <div className="upload-chain">
+          {uploadToSliceChain.map((step, index) => (
+            <article className="upload-step" key={step.title}>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{step.title}</h3>
+              <code>{step.endpoint}</code>
+              <p>{step.detail}</p>
+            </article>
+          ))}
         </div>
       </section>
 

@@ -147,4 +147,16 @@ describe("App", () => {
     assert.match(html, /Developer API/);
     assert.match(html, /Engine Plugins/);
   });
+
+  it("renders the uploaded asset to slice production chain", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    assert.match(html, /Upload-to-Slice Chain/);
+    assert.match(html, /Uploaded Asset API/);
+    assert.match(html, /Image-to-Image input asset/);
+    assert.match(html, /Editable slices/);
+    assert.match(html, /Professional source parser/);
+    assert.match(html, /\/api\/projects\/\{project_id\}\/assets/);
+    assert.match(html, /\/imports\/professional-sources/);
+  });
 });

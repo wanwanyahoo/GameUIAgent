@@ -44,6 +44,45 @@ export type StudioApiState = {
   };
 };
 
+export type StudioAsset = {
+  id: string;
+  projectId: string;
+  type: string;
+  name: string;
+  url: string;
+  source: string;
+  metadata: {
+    width: number;
+    height: number;
+    usage: string;
+    tags?: string[];
+  };
+};
+
+export type StudioAiJob = {
+  id: string;
+  projectId: string;
+  kind: string;
+  prompt: string;
+  inputAsset?: { id: string } | null;
+  resultAsset: { id: string };
+  candidates: Array<{ assetId: string; rank?: number; score?: number }>;
+  estimatedCredits: number;
+};
+
+export type StudioSegmentation = {
+  id: string;
+  projectId: string;
+  sourceAssetId: string;
+  irId: string;
+  confidence: number;
+  slices: Array<{
+    id: string;
+    type: string;
+    editableBounds: boolean;
+  }>;
+};
+
 type StudioStateDto = {
   project_id: string;
   active_selection: {
@@ -67,6 +106,45 @@ type StudioStateDto = {
   };
 };
 
+type StudioAssetDto = {
+  id: string;
+  project_id: string;
+  type: string;
+  name: string;
+  url: string;
+  source: string;
+  metadata: {
+    width: number;
+    height: number;
+    usage: string;
+    tags?: string[];
+  };
+};
+
+type StudioAiJobDto = {
+  id: string;
+  project_id: string;
+  kind: string;
+  prompt: string;
+  input_asset?: { id: string } | null;
+  result_asset: { id: string };
+  candidates: Array<{ asset_id: string; rank?: number; score?: number }>;
+  estimated_credits: number;
+};
+
+type StudioSegmentationDto = {
+  id: string;
+  project_id: string;
+  source_asset_id: string;
+  ir_id: string;
+  confidence: number;
+  slices: Array<{
+    id: string;
+    type: string;
+    editable_bounds: boolean;
+  }>;
+};
+
 export async function fetchStudioState(options: {
   projectId: string;
   token: string;
@@ -78,6 +156,103 @@ export async function fetchStudioState(options: {
     options.fetcher
   );
   return mapStudioStateDto(await response.json() as StudioStateDto);
+}
+
+export async function createStudioAsset(options: {
+  projectId: string;
+  token: string;
+  asset: {
+    name: string;
+    type: string;
+    url: string;
+    width: number;
+    height: number;
+    usage: string;
+    tags?: string[];
+  };
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAsset> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/assets`,
+    options.token,
+    options.fetcher,
+    {
+      method: "POST",
+      body: JSON.stringify(options.asset)
+    }
+  );
+  return mapStudioAssetDto(await response.json() as StudioAssetDto);
+}
+
+export async function listStudioAssets(options: {
+  projectId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAsset[]> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/assets`,
+    options.token,
+    options.fetcher
+  );
+  const dto = await response.json() as { assets: StudioAssetDto[] };
+  return dto.assets.map(mapStudioAssetDto);
+}
+
+export async function createStudioAiJob(options: {
+  projectId: string;
+  token: string;
+  job: {
+    kind: string;
+    prompt: string;
+    inputAssetId?: string;
+    referenceAssetId?: string;
+    maskAssetId?: string;
+    negativePrompt?: string;
+    seed?: number;
+    model?: string;
+    count?: number;
+  };
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAiJob> {
+  const payload = {
+    kind: options.job.kind,
+    prompt: options.job.prompt,
+    input_asset_id: options.job.inputAssetId,
+    reference_asset_id: options.job.referenceAssetId,
+    mask_asset_id: options.job.maskAssetId,
+    negative_prompt: options.job.negativePrompt,
+    seed: options.job.seed,
+    model: options.job.model,
+    count: options.job.count
+  };
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/ai/jobs`,
+    options.token,
+    options.fetcher,
+    {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }
+  );
+  return mapStudioAiJobDto(await response.json() as StudioAiJobDto);
+}
+
+export async function createStudioSegmentation(options: {
+  projectId: string;
+  token: string;
+  assetId: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioSegmentation> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/segmentations`,
+    options.token,
+    options.fetcher,
+    {
+      method: "POST",
+      body: JSON.stringify({ asset_id: options.assetId })
+    }
+  );
+  return mapStudioSegmentationDto(await response.json() as StudioSegmentationDto);
 }
 
 export async function applyStudioCorrection(options: {
@@ -135,6 +310,50 @@ function mapStudioStateDto(dto: StudioStateDto): StudioApiState {
       targetEngine: dto.export_wizard.target_engine,
       steps: dto.export_wizard.steps
     }
+  };
+}
+
+function mapStudioAssetDto(dto: StudioAssetDto): StudioAsset {
+  return {
+    id: dto.id,
+    projectId: dto.project_id,
+    type: dto.type,
+    name: dto.name,
+    url: dto.url,
+    source: dto.source,
+    metadata: dto.metadata
+  };
+}
+
+function mapStudioAiJobDto(dto: StudioAiJobDto): StudioAiJob {
+  return {
+    id: dto.id,
+    projectId: dto.project_id,
+    kind: dto.kind,
+    prompt: dto.prompt,
+    inputAsset: dto.input_asset,
+    resultAsset: dto.result_asset,
+    candidates: dto.candidates.map((candidate) => ({
+      assetId: candidate.asset_id,
+      rank: candidate.rank,
+      score: candidate.score
+    })),
+    estimatedCredits: dto.estimated_credits
+  };
+}
+
+function mapStudioSegmentationDto(dto: StudioSegmentationDto): StudioSegmentation {
+  return {
+    id: dto.id,
+    projectId: dto.project_id,
+    sourceAssetId: dto.source_asset_id,
+    irId: dto.ir_id,
+    confidence: dto.confidence,
+    slices: dto.slices.map((slice) => ({
+      id: slice.id,
+      type: slice.type,
+      editableBounds: slice.editable_bounds
+    }))
   };
 }
 

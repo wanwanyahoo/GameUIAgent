@@ -53,11 +53,28 @@ class ProjectRequest(BaseModel):
     canvas: dict[str, int]
 
 
+class AssetRequest(BaseModel):
+    name: str
+    type: str
+    url: str
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    usage: str
+    tags: list[str] = Field(default_factory=list)
+
+
 class AiJobRequest(BaseModel):
     kind: str
     prompt: str
     style: str | None = None
     size: str = "landscape_16_9"
+    input_asset_id: str | None = None
+    reference_asset_id: str | None = None
+    mask_asset_id: str | None = None
+    negative_prompt: str | None = None
+    seed: int | None = None
+    model: str | None = None
+    count: int = Field(default=1, ge=1)
 
 
 class SegmentationRequest(BaseModel):
@@ -102,6 +119,14 @@ class ProfessionalImportRequest(BaseModel):
     file_name: str
     layers: list[ProfessionalLayer]
     frame_id: str | None = None
+
+
+class ProfessionalImportSourceRequest(BaseModel):
+    source_type: str
+    asset_id: str | None = None
+    figma_url: str | None = None
+    frame_id: str | None = None
+    parser: str = "mock-layer-parser"
 
 
 class ApiKeyRequest(BaseModel):
@@ -379,6 +404,30 @@ def list_projects(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any
     }
 
 
+@app.post("/api/projects/{project_id}/assets", status_code=status.HTTP_201_CREATED)
+def create_project_asset(
+    project_id: str,
+    payload: AssetRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    asset = build_uploaded_asset(project, payload)
+    store["assets"][asset["id"]] = asset
+    return asset
+
+
+@app.get("/api/projects/{project_id}/assets")
+def list_project_assets(project_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    return {
+        "assets": [
+            asset
+            for asset in store["assets"].values()
+            if asset["project_id"] == project["id"]
+        ]
+    }
+
+
 @app.post("/api/projects/{project_id}/ai/jobs", status_code=status.HTTP_201_CREATED)
 def create_ai_job(
     project_id: str,
@@ -386,6 +435,9 @@ def create_ai_job(
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     project = require_project(project_id, user)
+    input_asset = require_optional_project_asset(project, payload.input_asset_id)
+    reference_asset = require_optional_project_asset(project, payload.reference_asset_id)
+    mask_asset = require_optional_project_asset(project, payload.mask_asset_id)
     asset = {
         "id": make_id("ast"),
         "project_id": project["id"],
@@ -394,14 +446,37 @@ def create_ai_job(
         "prompt": payload.prompt,
         "url": f"/generated/{project['id']}/{payload.kind}.png",
         "size": payload.size,
+        "source": "ai",
+        "metadata": {
+            "width": project["canvas"]["width"],
+            "height": project["canvas"]["height"],
+            "usage": payload.kind,
+            "input_asset_id": input_asset["id"] if input_asset else None,
+        },
     }
     store["assets"][asset["id"]] = asset
+    estimated_credits = estimate_ai_job_credits(payload)
     job = {
         "id": make_id("job"),
         "project_id": project["id"],
         "kind": payload.kind,
         "prompt": payload.prompt,
         "style": payload.style,
+        "input_asset": input_asset,
+        "reference_asset": reference_asset,
+        "mask_asset": mask_asset,
+        "parameters": {
+            "negative_prompt": payload.negative_prompt,
+            "seed": payload.seed,
+            "model": payload.model,
+            "count": payload.count,
+            "size": payload.size,
+        },
+        "estimated_credits": estimated_credits,
+        "candidates": [
+            {"asset_id": asset["id"], "rank": index + 1, "score": round(0.94 - index * 0.03, 2)}
+            for index in range(payload.count)
+        ],
         "status": "succeeded",
         "progress": 100,
         "result_asset": asset,
@@ -420,9 +495,22 @@ def create_segmentation(
     asset = store["assets"].get(payload.asset_id)
     if not asset or asset["project_id"] != project["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
-    ir = build_demo_ir(project)
+    if asset.get("source") == "ai":
+        ir = build_demo_ir(project)
+        slices = build_slices_from_ir(ir)
+    else:
+        ir = build_ir_from_asset_segmentation(project, asset)
+        slices = build_segmentation_slices(project, asset)
     store["irs"][ir["id"]] = ir
-    return {"id": make_id("seg"), "project_id": project["id"], "source_asset_id": payload.asset_id, "ir": ir}
+    return {
+        "id": make_id("seg"),
+        "project_id": project["id"],
+        "source_asset_id": payload.asset_id,
+        "ir_id": ir["id"],
+        "confidence": 0.88,
+        "slices": slices,
+        "ir": ir,
+    }
 
 
 @app.post("/api/projects/{project_id}/imports/professional", status_code=status.HTTP_201_CREATED)
@@ -441,6 +529,55 @@ def create_professional_import(
         "id": make_id("imp"),
         "project_id": project["id"],
         "design_document": design_document,
+        "ir": ir,
+    }
+    store["imports"][imported["id"]] = imported
+    return imported
+
+
+@app.post("/api/projects/{project_id}/imports/professional-sources", status_code=status.HTTP_201_CREATED)
+def create_professional_import_source(
+    project_id: str,
+    payload: ProfessionalImportSourceRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    if payload.source_type not in {"psd", "psb", "figma"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported source type")
+    source_asset = require_optional_project_asset(project, payload.asset_id)
+    if payload.source_type in {"psd", "psb"} and not source_asset:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Asset source required")
+    if payload.source_type == "figma" and not payload.figma_url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Figma URL required")
+    source = {
+        "source_type": payload.source_type,
+        "asset_id": source_asset["id"] if source_asset else None,
+        "figma_url": payload.figma_url,
+        "frame_id": payload.frame_id,
+        "parser": payload.parser,
+    }
+    file_name = source_asset["name"] if source_asset else str(payload.figma_url)
+    document = build_design_document(
+        project,
+        ProfessionalImportRequest(
+            source_type=payload.source_type,
+            file_name=file_name,
+            frame_id=payload.frame_id,
+            layers=mock_layers_for_import_source(project, payload.source_type),
+        ),
+    )
+    ir = build_ir_from_design_document(project, document)
+    store["irs"][ir["id"]] = ir
+    imported = {
+        "id": make_id("imp"),
+        "project_id": project["id"],
+        "status": "parsed",
+        "source": source,
+        "design_document": document,
+        "parse_summary": {
+            "parser": payload.parser,
+            "preserved_layers": document["preserved_layers"],
+        },
         "ir": ir,
     }
     store["imports"][imported["id"]] = imported
@@ -1087,6 +1224,153 @@ def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
             {"id": "title_text", "type": "text", "name": "Screen Title", "rect": {"x": 320, "y": 150, "width": 640, "height": 72}},
         ],
     }
+
+
+def build_uploaded_asset(project: dict[str, Any], payload: AssetRequest) -> dict[str, Any]:
+    if payload.type not in {"original_upload", "reference_image", "mask", "psd", "psb", "figma_link"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported asset type")
+    return {
+        "id": make_id("ast"),
+        "project_id": project["id"],
+        "type": payload.type,
+        "name": payload.name,
+        "url": payload.url,
+        "source": "upload",
+        "metadata": {
+            "width": payload.width,
+            "height": payload.height,
+            "usage": payload.usage,
+            "tags": payload.tags,
+        },
+    }
+
+
+def require_optional_project_asset(project: dict[str, Any], asset_id: str | None) -> dict[str, Any] | None:
+    if asset_id is None:
+        return None
+    asset = store["assets"].get(asset_id)
+    if not asset or asset["project_id"] != project["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    return asset
+
+
+def estimate_ai_job_credits(payload: AiJobRequest) -> int:
+    base_costs = {
+        "text_to_image": 2,
+        "image_to_image": 2,
+        "inpainting": 3,
+        "matting": 2,
+        "upscale": 2,
+    }
+    return base_costs.get(payload.kind, 2) * max(payload.count, 1)
+
+
+def build_segmentation_slices(project: dict[str, Any], asset: dict[str, Any]) -> list[dict[str, Any]]:
+    width = asset.get("metadata", {}).get("width", project["canvas"]["width"])
+    height = asset.get("metadata", {}).get("height", project["canvas"]["height"])
+    return [
+        {
+            "id": "slice_panel_main",
+            "type": "panel",
+            "name": "Main Panel",
+            "confidence": 0.9,
+            "editable_bounds": True,
+            "rect": {"x": int(width * 0.12), "y": int(height * 0.12), "width": int(width * 0.76), "height": int(height * 0.7)},
+        },
+        {
+            "id": "slice_button_primary",
+            "type": "button",
+            "name": "Primary Button",
+            "confidence": 0.87,
+            "editable_bounds": True,
+            "rect": {"x": int(width * 0.68), "y": int(height * 0.76), "width": int(width * 0.16), "height": int(height * 0.09)},
+        },
+        {
+            "id": "slice_title_text",
+            "type": "text",
+            "name": "Title Text",
+            "confidence": 0.84,
+            "editable_bounds": True,
+            "rect": {"x": int(width * 0.17), "y": int(height * 0.15), "width": int(width * 0.32), "height": int(height * 0.07)},
+        },
+    ]
+
+
+def build_slices_from_ir(ir: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": node["id"],
+            "type": node["type"],
+            "name": node["name"],
+            "confidence": 0.9,
+            "editable_bounds": True,
+            "rect": node["rect"],
+        }
+        for node in ir["nodes"]
+        if node["type"] != "canvas"
+    ]
+
+
+def build_ir_from_asset_segmentation(project: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:
+    slices = build_segmentation_slices(project, asset)
+    nodes = [
+        {
+            "id": "root",
+            "type": "canvas",
+            "name": project["name"],
+            "rect": {"x": 0, "y": 0, "width": project["canvas"]["width"], "height": project["canvas"]["height"]},
+        }
+    ]
+    nodes.extend(
+        {
+            "id": item["id"],
+            "type": item["type"],
+            "name": item["name"],
+            "rect": item["rect"],
+            "source_asset_id": asset["id"],
+            "confidence": item["confidence"],
+        }
+        for item in slices
+    )
+    return {
+        "id": make_id("ir"),
+        "project_id": project["id"],
+        "version": "0.1.0",
+        "engine_targets": ["unity", "cocos", "godot", "unreal"],
+        "canvas": project["canvas"],
+        "source_asset": {
+            "id": asset["id"],
+            "type": asset["type"],
+            "name": asset["name"],
+        },
+        "nodes": nodes,
+    }
+
+
+def mock_layers_for_import_source(project: dict[str, Any], source_type: str) -> list[ProfessionalLayer]:
+    width = project["canvas"]["width"]
+    height = project["canvas"]["height"]
+    return [
+        ProfessionalLayer(
+            id=f"{source_type}_layer_panel",
+            name="Imported Main Panel",
+            kind="image",
+            rect={"x": int(width * 0.1), "y": int(height * 0.12), "width": int(width * 0.8), "height": int(height * 0.68)},
+        ),
+        ProfessionalLayer(
+            id=f"{source_type}_layer_button",
+            name="Imported CTA Button",
+            kind="image",
+            rect={"x": int(width * 0.66), "y": int(height * 0.76), "width": int(width * 0.18), "height": int(height * 0.1)},
+        ),
+        ProfessionalLayer(
+            id=f"{source_type}_layer_label",
+            name="Imported Label",
+            kind="text",
+            text="START",
+            rect={"x": int(width * 0.7), "y": int(height * 0.78), "width": int(width * 0.1), "height": int(height * 0.05)},
+        ),
+    ]
 
 
 def build_design_document(project: dict[str, Any], payload: ProfessionalImportRequest) -> dict[str, Any]:

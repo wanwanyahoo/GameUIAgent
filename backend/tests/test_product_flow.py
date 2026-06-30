@@ -155,6 +155,183 @@ def test_docs_center_returns_product_api_and_plugin_guides():
     assert "Unreal" in docs[2]["engines"]
 
 
+def test_uploaded_asset_drives_image_to_image_segmentation_and_unity_export():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Uploaded HUD Flow",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+
+    upload_response = client.post(
+        f"/api/projects/{project['id']}/assets",
+        headers=headers,
+        json={
+            "name": "main-menu-reference.png",
+            "type": "reference_image",
+            "url": "https://assets.gameuiagent.dev/main-menu-reference.png",
+            "width": 1920,
+            "height": 1080,
+            "usage": "image_to_image",
+        },
+    )
+
+    assert upload_response.status_code == 201
+    uploaded = upload_response.json()
+    assert uploaded["source"] == "upload"
+    assert uploaded["metadata"]["width"] == 1920
+
+    listed_assets = client.get(f"/api/projects/{project['id']}/assets", headers=headers).json()["assets"]
+    assert listed_assets[0]["id"] == uploaded["id"]
+
+    job_response = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "image_to_image",
+            "prompt": "turn this into a sci-fi battle HUD",
+            "input_asset_id": uploaded["id"],
+            "negative_prompt": "blur, low quality",
+            "seed": 42,
+            "model": "game-ui-xl",
+            "count": 2,
+        },
+    )
+
+    assert job_response.status_code == 201
+    job = job_response.json()
+    assert job["input_asset"]["id"] == uploaded["id"]
+    assert job["parameters"]["negative_prompt"] == "blur, low quality"
+    assert job["candidates"][0]["asset_id"] == job["result_asset"]["id"]
+    assert job["estimated_credits"] == 4
+
+    segmentation_response = client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": uploaded["id"]},
+    )
+
+    assert segmentation_response.status_code == 201
+    segmentation = segmentation_response.json()
+    assert segmentation["source_asset_id"] == uploaded["id"]
+    assert segmentation["ir_id"] == segmentation["ir"]["id"]
+    assert segmentation["slices"][0]["editable_bounds"] is True
+    assert segmentation["slices"][1]["type"] == "button"
+    assert segmentation["confidence"] >= 0.8
+
+    export_response = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": segmentation["ir"]["id"], "target_engine": "unity"},
+    )
+
+    assert export_response.status_code == 201
+    assert export_response.json()["package"]["manifest"]["asset_ir"]["node_count"] >= 4
+
+
+def test_professional_import_source_submission_creates_parser_job():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Source Import UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1440, "height": 900},
+        },
+    ).json()
+    psd_asset = client.post(
+        f"/api/projects/{project['id']}/assets",
+        headers=headers,
+        json={
+            "name": "shop.psd",
+            "type": "psd",
+            "url": "s3://gameuiagent/imports/shop.psd",
+            "width": 1440,
+            "height": 900,
+            "usage": "professional_import",
+        },
+    ).json()
+
+    source_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "asset_id": psd_asset["id"],
+            "frame_id": None,
+            "parser": "mock-layer-parser",
+        },
+    )
+
+    assert source_response.status_code == 201
+    source = source_response.json()
+    assert source["status"] == "parsed"
+    assert source["source"]["asset_id"] == psd_asset["id"]
+    assert source["design_document"]["source_type"] == "psd"
+    assert source["ir"]["professional_source"]["file_name"] == "shop.psd"
+    assert source["parse_summary"]["preserved_layers"] >= 3
+
+    figma_response = client.post(
+        f"/api/projects/{project['id']}/imports/professional-sources",
+        headers=headers,
+        json={
+            "source_type": "figma",
+            "figma_url": "https://figma.com/file/gameuiagent-shop",
+            "frame_id": "12:34",
+            "parser": "figma-api",
+        },
+    )
+
+    assert figma_response.status_code == 201
+    assert figma_response.json()["source"]["figma_url"].endswith("gameuiagent-shop")
+    assert figma_response.json()["ir"]["professional_source"]["frame_id"] == "12:34"
+
+
+def test_uploaded_asset_and_ai_job_reject_invalid_production_bounds():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Invalid Upload Bounds",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+
+    invalid_asset_response = client.post(
+        f"/api/projects/{project['id']}/assets",
+        headers=headers,
+        json={
+            "name": "broken-reference.png",
+            "type": "reference_image",
+            "url": "https://assets.gameuiagent.dev/broken-reference.png",
+            "width": -1920,
+            "height": 0,
+            "usage": "image_to_image",
+        },
+    )
+
+    assert invalid_asset_response.status_code == 422
+
+    invalid_job_response = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={
+            "kind": "image_to_image",
+            "prompt": "restyle this HUD",
+            "count": 0,
+        },
+    )
+
+    assert invalid_job_response.status_code == 422
+
+
 def test_project_ai_segmentation_and_unity_export_flow():
     headers = auth_headers()
 
