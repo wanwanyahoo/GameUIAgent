@@ -2,6 +2,7 @@ from binascii import crc32
 import hashlib
 import hmac
 import json
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
 from threading import Thread
@@ -26,6 +27,8 @@ from app.persistence import create_production_store
 
 
 client = TestClient(app)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def minimal_psd_header(width: int, height: int, *, version: int = 1) -> bytes:
@@ -3980,6 +3983,38 @@ JSON
     assert body["snapshot"]["source"] == "unity_batchmode"
     assert body["ir"]["nodes"][1]["name"] == "Play CTA"
     assert body["command"]["executable"] == str(runner)
+
+
+def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
+    project_root = REPO_ROOT / "engines" / "unity-test-project"
+    runner_script = project_root / "run-gameuiagent-e2e.sh"
+    editor_runner = project_root / "Assets" / "GameUIAgent" / "Editor" / "GameUIAgentE2ERunner.cs"
+    package_manifest = project_root / "Packages" / "manifest.json"
+    project_version = project_root / "ProjectSettings" / "ProjectVersion.txt"
+
+    assert project_version.exists()
+    assert package_manifest.exists()
+    assert editor_runner.exists()
+    assert runner_script.exists()
+
+    runner_source = runner_script.read_text(encoding="utf-8")
+    assert "-batchmode" in runner_source
+    assert "-executeMethod GameUIAgent.Editor.GameUIAgentE2ERunner.Run" in runner_source
+    assert "UNITY_EDITOR_EXECUTABLE" in runner_source
+    assert "GAMEUIAGENT_E2E_PACKAGE_JSON" in runner_source
+    assert "GAMEUIAGENT_E2E_RESULT_PATH" in runner_source
+    assert "cat \"$RESULT_PATH\"" in runner_source
+    assert "-logFile \"$LOG_PATH\"" in runner_source
+
+    editor_source = editor_runner.read_text(encoding="utf-8")
+    assert "namespace GameUIAgent.Editor" in editor_source
+    assert "public static void Run()" in editor_source
+    assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_PACKAGE_JSON\")" in editor_source
+    assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_RESULT_PATH\")" in editor_source
+    assert "PrefabUtility.SaveAsPrefabAsset" in editor_source
+    assert "File.WriteAllText(resultPath" in editor_source
+    assert "JsonUtility.ToJson" in editor_source
+    assert "Console.Out.WriteLine" in editor_source
 
 
 def test_unreal_plugin_import_logs_can_be_queried_with_summary():

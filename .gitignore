@@ -8,3 +8,11 @@ __pycache__/
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+engines/**/Library/
+engines/**/Temp/
+engines/**/Logs/
+engines/**/Obj/
+engines/**/Build/
+engines/**/Builds/
+engines/**/*.csproj
+engines/**/*.sln
