@@ -159,6 +159,8 @@ export async function runGeneratedAssetAction(options: RunGeneratedAssetActionOp
 
 export async function runProfessionalImportAction(options: RunProfessionalImportActionOptions): Promise<RunStudioActionResult> {
   const clients = { ...defaultProfessionalImportClients, ...options.clients };
+  const targetEngine = options.project.target_engine;
+  const targetEngineLabel = engineDisplayName(targetEngine);
   const figmaUrl = options.figmaUrl?.trim();
   if (figmaUrl) {
     const imported = await clients.createImportSource({
@@ -174,11 +176,11 @@ export async function runProfessionalImportAction(options: RunProfessionalImport
     const exportResult = await clients.previewExport({
       projectId: options.project.id,
       token: options.token,
-      targetEngine: "unity",
+      targetEngine,
     });
     return {
       status: "ok",
-      message: "Figma frame imported into editable Asset IR and Unity export generated",
+      message: `Figma frame imported into editable Asset IR and ${targetEngineLabel} export generated`,
       result: { imported, export: exportResult }
     };
   }
@@ -220,15 +222,26 @@ export async function runProfessionalImportAction(options: RunProfessionalImport
   const exportResult = await clients.previewExport({
     projectId: options.project.id,
     token: options.token,
-    targetEngine: "unity",
+    targetEngine,
   });
   return {
     status: "ok",
     message: options.file
-      ? "PSD file uploaded, parsed into editable Asset IR and Unity export generated"
-      : "PSD imported into editable Asset IR and Unity export generated",
+      ? `PSD file uploaded, parsed into editable Asset IR and ${targetEngineLabel} export generated`
+      : `PSD imported into editable Asset IR and ${targetEngineLabel} export generated`,
     result: { asset, imported, export: exportResult }
   };
+}
+
+function engineDisplayName(engine: string): string {
+  const names: Record<string, string> = {
+    unity: "Unity",
+    cocos3: "Cocos Creator 3",
+    cocos2: "Cocos Creator 2",
+    godot: "Godot",
+    unreal: "Unreal"
+  };
+  return names[engine] ?? engine;
 }
 
 function safeAssetSlug(name: string): string {

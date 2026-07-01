@@ -616,6 +616,52 @@ describe("studio API client", () => {
     assert.equal(result.message, "Figma frame imported into editable Asset IR and Unity export generated");
   });
 
+  it("exports professional imports to the project target engine", async () => {
+    const calls: Array<{ action: string; value?: string }> = [];
+
+    const result = await runProfessionalImportAction({
+      token: "tok_1",
+      project: {
+        id: "prj_godot",
+        name: "Godot HUD",
+        target_engine: "godot",
+        canvas: { width: 1280, height: 720 },
+        status: "active",
+        owner_id: "usr_1",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      figmaUrl: "https://www.figma.com/file/gameuiagent/GodotHUD?node-id=2-4",
+      clients: {
+        createImportSource: async (options) => {
+          calls.push({ action: "figma", value: options.source.sourceType });
+          return {
+            id: "imp_godot",
+            projectId: options.projectId,
+            status: "parsed",
+            source: {
+              sourceType: "figma",
+              figmaUrl: options.source.figmaUrl,
+              parser: options.source.parser ?? "figma-api-parser"
+            },
+            parseSummary: { parser: "figma-api-parser", preservedLayers: 2, warnings: [] },
+            ir: { id: "ir_godot", projectId: options.projectId }
+          };
+        },
+        previewExport: async (options) => {
+          calls.push({ action: "export", value: options.targetEngine });
+          return { export: { id: "exp_godot" } };
+        }
+      }
+    });
+
+    assert.deepEqual(calls, [
+      { action: "figma", value: "figma" },
+      { action: "export", value: "godot" }
+    ]);
+    assert.equal(result.message, "Figma frame imported into editable Asset IR and Godot export generated");
+  });
+
   it("manages queued Studio AI jobs", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = async (url: string, init?: RequestInit) => {

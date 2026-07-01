@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import hmac
 import smtplib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from hashlib import pbkdf2_hmac, sha256
 from hmac import compare_digest
@@ -371,7 +371,14 @@ def current_api_user(x_api_key: str = Header(default="", alias="X-API-Key")) -> 
     api_key = store["api_keys"].get(x_api_key)
     if not api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
-    return api_key["user"]
+    user = api_key["user"]
+    account = billing_account_for(user)
+    if not account["plan"].get("api_enabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API access is not enabled for the current plan",
+        )
+    return user
 
 
 def require_worker_token(x_worker_token: str = Header(default="", alias="X-Worker-Token")) -> bool:
@@ -1267,6 +1274,8 @@ def create_export(
     user: dict[str, Any] = Depends(current_user),
 ) -> dict[str, Any]:
     project = require_project(project_id, user)
+    if payload.target_engine not in supported_plugin_engines():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported target engine")
     ir = store["irs"].get(payload.ir_id)
     if not ir or ir["project_id"] != project["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="IR not found")
@@ -4109,12 +4118,26 @@ def deduct_credits(user: dict[str, Any], service: str, credits: int) -> dict[str
 def apply_rate_limit_headers(user: dict[str, Any], response: Response) -> None:
     account = billing_account_for(user)
     limit = account["plan"]["rate_limit_per_minute"]
-    usage = store["rate_limits"].setdefault(user["id"], 0) + 1
-    store["rate_limits"][user["id"]] = usage
+    now = datetime.now(timezone.utc)
+    window = store["rate_limits"].get(user["id"])
+    if not isinstance(window, dict):
+        window = {"window_start": now.isoformat(), "count": 0}
+    try:
+        window_start = datetime.fromisoformat(window["window_start"])
+    except (KeyError, TypeError, ValueError):
+        window_start = now
+        window = {"window_start": now.isoformat(), "count": 0}
+    if now - window_start >= timedelta(seconds=60):
+        window_start = now
+        window = {"window_start": now.isoformat(), "count": 0}
+    usage = int(window.get("count", 0)) + 1
+    window["count"] = usage
+    store["rate_limits"][user["id"]] = window
     remaining = max(limit - usage, 0)
+    reset_seconds = max(1, int((window_start + timedelta(seconds=60) - now).total_seconds()))
     response.headers["X-RateLimit-Limit"] = str(limit)
     response.headers["X-RateLimit-Remaining"] = str(remaining)
-    response.headers["X-RateLimit-Reset"] = "60"
+    response.headers["X-RateLimit-Reset"] = str(reset_seconds)
     if usage > limit:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="RATE_LIMIT_EXCEEDED")
 

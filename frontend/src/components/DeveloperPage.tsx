@@ -4,9 +4,9 @@ const apiEndpoints = [
   {
     category: "AI Generation",
     endpoints: [
-      { method: "POST", path: "/api/ai/jobs", desc: "Create a new AI generation job" },
-      { method: "GET", path: "/api/ai/jobs/{id}", desc: "Get job status and result" },
-      { method: "GET", path: "/api/ai/jobs", desc: "List all AI jobs for a project" },
+      { method: "POST", path: "/api/projects/{project_id}/ai/jobs", desc: "Create a project-scoped AI generation job" },
+      { method: "GET", path: "/api/projects/{project_id}/ai/jobs/{id}", desc: "Get project job status and result" },
+      { method: "GET", path: "/api/projects/{project_id}/ai/jobs", desc: "List all AI jobs for a project" },
     ],
   },
   {
@@ -22,15 +22,16 @@ const apiEndpoints = [
   {
     category: "Professional Import",
     endpoints: [
-      { method: "POST", path: "/api/import/figma", desc: "Import from Figma file" },
-      { method: "POST", path: "/api/import/psd", desc: "Import PSD/PSB file" },
+      { method: "POST", path: "/api/projects/{project_id}/imports/professional-sources", desc: "Import PSD/PSB or Figma into editable Asset IR" },
+      { method: "POST", path: "/api/projects/{project_id}/segmentations", desc: "Slice uploaded or AI-generated images into editable UI layers" },
     ],
   },
   {
     category: "Engine Export",
     endpoints: [
-      { method: "POST", path: "/api/export/{engine}", desc: "Export project for engine" },
-      { method: "GET", path: "/api/export/{job_id}", desc: "Get export status" },
+      { method: "POST", path: "/api/projects/{project_id}/exports", desc: "Export an Asset IR for Unity, Cocos, Godot or Unreal" },
+      { method: "GET", path: "/api/plugin/exports/{export_id}/manifest", desc: "Fetch plugin import manifest" },
+      { method: "GET", path: "/api/plugin/exports/{export_id}/download", desc: "Download JSON or ZIP export package" },
     ],
   },
   {
@@ -99,16 +100,30 @@ export function DeveloperPage() {
           </section>
 
           <section className="docs-section">
+            <h2>Production API Routes</h2>
+            <div className="endpoint-list">
+              {apiEndpoints.flatMap((section) => section.endpoints).map((ep, i) => (
+                <div key={`${ep.method}-${ep.path}-${i}`} className="endpoint-card compact">
+                  <div className="endpoint-header">
+                    <span className={`method-badge method-${ep.method.toLowerCase()}`}>{ep.method}</span>
+                    <code className="endpoint-path">{ep.path}</code>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="docs-section">
             <h2>Authentication</h2>
             <p>All API requests require authentication using an API key passed in the <code>X-API-Key</code> header.</p>
             <div className="code-block-wrapper">
-              <pre><code>{`curl https://api.gameuiagent.com/api/ai/jobs \\
+              <pre><code>{`curl https://api.gameuiagent.com/api/projects/{project_id}/ai/jobs \\
   -H "X-API-Key: guk_your_api_key_here" \\
   -H "Content-Type: application/json"`}</code></pre>
               <button
                 type="button"
                 className="copy-btn"
-                onClick={() => handleCopy('curl https://api.gameuiagent.com/api/ai/jobs \\\n  -H "X-API-Key: guk_your_api_key_here" \\\n  -H "Content-Type: application/json"', "auth")}
+                onClick={() => handleCopy('curl https://api.gameuiagent.com/api/projects/{project_id}/ai/jobs \\\n  -H "X-API-Key: guk_your_api_key_here" \\\n  -H "Content-Type: application/json"', "auth")}
               >
                 {copied === "auth" ? "Copied!" : "Copy"}
               </button>
@@ -165,7 +180,7 @@ export function DeveloperPage() {
           <section className="docs-section">
             <h2>Example: Text to Image</h2>
             <div className="code-block-wrapper">
-              <pre><code>{`curl -X POST https://api.gameuiagent.com/api/ai/jobs \\
+              <pre><code>{`curl -X POST https://api.gameuiagent.com/api/projects/{project_id}/ai/jobs \\
   -H "X-API-Key: guk_your_api_key" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -179,7 +194,7 @@ export function DeveloperPage() {
                 type="button"
                 className="copy-btn"
                 onClick={() => handleCopy(
-                  'curl -X POST https://api.gameuiagent.com/api/ai/jobs \\\n  -H "X-API-Key: guk_your_api_key" \\\n  -H "Content-Type: application/json" \\\n  -d \'{\n    "kind": "text_to_image",\n    "prompt": "cyberpunk game UI main menu",\n    "size": "1024x1024",\n    "style": "cyberpunk",\n    "num_images": 1\n  }\'',
+                  'curl -X POST https://api.gameuiagent.com/api/projects/{project_id}/ai/jobs \\\n  -H "X-API-Key: guk_your_api_key" \\\n  -H "Content-Type: application/json" \\\n  -d \'{\n    "kind": "text_to_image",\n    "prompt": "cyberpunk game UI main menu",\n    "size": "1024x1024",\n    "style": "cyberpunk",\n    "num_images": 1\n  }\'',
                   "example"
                 )}
               >

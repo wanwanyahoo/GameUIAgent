@@ -2299,6 +2299,38 @@ def test_project_ai_segmentation_and_unity_export_flow():
     assert plugin_response.json()["jobs"][0]["id"] == export["id"]
 
 
+def test_export_rejects_unsupported_target_engine():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Unsupported Engine UI",
+            "target_engine": "unity",
+            "canvas": {"width": 1280, "height": 720},
+        },
+    ).json()
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "unsupported engine export"},
+    ).json()
+    segmentation = client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": job["result_asset"]["id"]},
+    ).json()
+
+    export_response = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": segmentation["ir"]["id"], "target_engine": "flash"},
+    )
+
+    assert export_response.status_code == 400
+    assert export_response.json()["detail"] == "Unsupported target engine"
+
+
 def test_project_audit_events_trace_ai_export_and_plugin_import(tmp_path):
     db_path = tmp_path / "audit-events.sqlite3"
     configure_persistent_store(str(db_path))
@@ -3003,6 +3035,74 @@ def test_api_key_creation_requires_api_entitlement(tmp_path):
     response = client.post("/api/user/api-keys", headers=headers, json={"name": "blocked"})
     assert response.status_code == 403
     assert response.json()["detail"] == "API access is not enabled for the current plan"
+
+
+def test_existing_api_key_is_blocked_after_plan_loses_api_entitlement(tmp_path):
+    configure_persistent_store(str(tmp_path / "api-runtime-entitlement.sqlite3"))
+    configure_object_storage(str(tmp_path / "api-runtime-entitlement-objects"))
+
+    headers = auth_headers()
+    key_response = client.post("/api/user/api-keys", headers=headers, json={"name": "runtime-gate"})
+    assert key_response.status_code == 201
+    api_headers = {"X-API-Key": key_response.json()["api_key"]}
+
+    user_id = client.get("/api/user/me", headers=headers).json()["id"]
+    account = store["billing_accounts"][user_id]
+    account["plan"] = {
+        "id": "free",
+        "name": "Free",
+        "api_enabled": False,
+        "rate_limit_per_minute": 5,
+        "concurrent_ai_tasks": 1,
+    }
+    store.flush()
+
+    response = client.post(
+        "/api/ai/services/super-matting/cost",
+        headers=api_headers,
+        json={
+            "image_url": "https://example.com/no-api.png",
+            "output": "alpha_png",
+            "width": 512,
+            "height": 512,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"] == "API access is not enabled for the current plan"
+
+
+def test_developer_api_rate_limit_resets_after_window(tmp_path):
+    configure_persistent_store(str(tmp_path / "api-rate-limit.sqlite3"))
+    configure_object_storage(str(tmp_path / "api-rate-limit-objects"))
+
+    headers = auth_headers()
+    user_id = client.get("/api/user/me", headers=headers).json()["id"]
+    account = store["billing_accounts"][user_id]
+    account["plan"]["rate_limit_per_minute"] = 1
+    store.flush()
+
+    key_response = client.post("/api/user/api-keys", headers=headers, json={"name": "rate-window"})
+    api_headers = {"X-API-Key": key_response.json()["api_key"]}
+    payload = {
+        "image_url": "https://example.com/rate-limit.png",
+        "output": "alpha_png",
+        "width": 512,
+        "height": 512,
+    }
+
+    first = client.post("/api/ai/services/super-matting/cost", headers=api_headers, json=payload)
+    assert first.status_code == 200
+    assert first.headers["X-RateLimit-Remaining"] == "0"
+
+    blocked = client.post("/api/ai/services/super-matting/cost", headers=api_headers, json=payload)
+    assert blocked.status_code == 429
+
+    store["rate_limits"][user_id] = {"window_start": "2000-01-01T00:00:00+00:00", "count": 1}
+    store.flush()
+
+    reset = client.post("/api/ai/services/super-matting/cost", headers=api_headers, json=payload)
+    assert reset.status_code == 200
+    assert reset.headers["X-RateLimit-Remaining"] == "0"
 
 
 def create_engine_export(headers: dict[str, str], target_engine: str, name: str = "Plugin HUD") -> dict:

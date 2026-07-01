@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { App as StudioApp } from "../StudioApp";
+import { DeveloperPage } from "../components/DeveloperPage";
 
 describe("StudioApp", () => {
   it("matches the VberAI homepage information architecture with GameUIAgent branding", () => {
@@ -211,5 +212,19 @@ describe("StudioApp", () => {
     assert.match(html, /inference_runs/);
     assert.match(html, /\/api\/system\/production-readiness/);
     assert.match(html, /No in-memory-only data loss/);
+  });
+});
+
+describe("DeveloperPage", () => {
+  it("documents real project-scoped AI, export and billing endpoints", () => {
+    const html = renderToStaticMarkup(<DeveloperPage />);
+
+    assert.match(html, /\/api\/projects\/\{project_id\}\/ai\/jobs/);
+    assert.match(html, /\/api\/projects\/\{project_id\}\/exports/);
+    assert.match(html, /\/api\/user\/billing\/orders/);
+    assert.match(html, /\/api\/user\/billing\/orders\/\{id\}\/confirm/);
+    assert.doesNotMatch(html, /\/api\/ai\/jobs/);
+    assert.doesNotMatch(html, /\/api\/export\/\{engine\}/);
+    assert.doesNotMatch(html, /\/api\/user\/billing\/recharge/);
   });
 });
