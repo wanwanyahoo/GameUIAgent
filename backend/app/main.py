@@ -1936,7 +1936,7 @@ def execute_engine_e2e_runner(export: dict[str, Any], timeout_seconds: int) -> d
             "stderr": completed.stderr[:4000],
         }
     try:
-        result = json.loads(completed.stdout)
+        result = parse_engine_e2e_stdout(completed.stdout)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -1949,6 +1949,26 @@ def execute_engine_e2e_runner(export: dict[str, Any], timeout_seconds: int) -> d
     result.setdefault("summary", {"warnings": 0, "errors": 0})
     result.setdefault("logs", [])
     return result
+
+
+def parse_engine_e2e_stdout(stdout: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(stdout)
+        if isinstance(payload, dict):
+            return payload
+    except ValueError:
+        pass
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stdout):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(stdout[index:])
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and {"status", "summary", "logs"}.issubset(payload):
+            return payload
+    raise ValueError("No engine e2e result JSON found")
 
 
 def engine_e2e_executable(engine: str) -> str | None:

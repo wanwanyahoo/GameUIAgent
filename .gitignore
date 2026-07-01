@@ -14,5 +14,10 @@ engines/**/Logs/
 engines/**/Obj/
 engines/**/Build/
 engines/**/Builds/
+engines/**/UserSettings/
+engines/**/Assets/GameUIAgent/Generated/
+engines/**/Assets/GameUIAgent/Generated.meta
 engines/**/*.csproj
 engines/**/*.sln
+unityhome/
+.unity-home/

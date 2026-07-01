@@ -3985,6 +3985,33 @@ JSON
     assert body["command"]["executable"] == str(runner)
 
 
+def test_engine_e2e_runner_extracts_json_from_unity_stdout_noise(tmp_path, monkeypatch):
+    headers = auth_headers()
+    created = create_unity_export(headers, "Noisy Unity Editor HUD")
+    export_id = created["export"]["id"]
+    runner = tmp_path / "noisy-unity-e2e-runner"
+    runner.write_text(
+        """#!/bin/sh
+printf 'unable to open database file\\n'
+printf 'Unity licensing noise before result\\n'
+cat <<'JSON'
+{"status":"succeeded","engine_version":"2022.3.11f1","plugin_version":"0.3.0","duration_ms":7,"summary":{"assets_imported":2,"prefabs_created":1,"warnings":0,"errors":0},"logs":[{"level":"info","message":"Noisy Unity stdout tolerated"}],"snapshot":{"source":"unity_batchmode","layout":{"screen":"NoisyHUD","nodes":[{"id":"root","name":"Noisy HUD","type":"canvas","rect":{"x":0,"y":0,"width":1280,"height":720}}]},"sprites":[]}}
+JSON
+""",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    monkeypatch.setenv("GAMEUIAGENT_UNITY_EXECUTABLE", str(runner))
+
+    response = client.post(f"/api/system/engine-e2e/exports/{export_id}/run")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "succeeded"
+    assert body["engine_version"] == "2022.3.11f1"
+    assert body["import_log"]["logs"][0]["message"] == "Noisy Unity stdout tolerated"
+
+
 def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     project_root = REPO_ROOT / "engines" / "unity-test-project"
     runner_script = project_root / "run-gameuiagent-e2e.sh"
