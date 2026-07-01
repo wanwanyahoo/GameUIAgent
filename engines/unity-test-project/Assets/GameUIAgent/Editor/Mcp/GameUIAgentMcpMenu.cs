@@ -1,5 +1,7 @@
 using UnityEditor;
 using UnityEngine;
+using System;
+using System.IO;
 
 namespace GameUIAgent.Editor
 {
@@ -58,6 +60,32 @@ namespace GameUIAgent.Editor
             Debug.Log("GameUIAgent MCP snapshot response: " + JsonUtility.ToJson(response));
         }
 
+        [MenuItem("GameUIAgent/MCP/Run Build IR")]
+        public static void RunBuildIr()
+        {
+            string snapshotPath = EditorUtility.OpenFilePanel("Select snapshot json", Application.dataPath, "json");
+            if (string.IsNullOrWhiteSpace(snapshotPath))
+            {
+                return;
+            }
+
+            GameUIAgentMcpDispatcher dispatcher = new GameUIAgentMcpDispatcher();
+            GameUIAgentToolResponse response = dispatcher.Dispatch(new GameUIAgentToolRequest
+            {
+                tool_name = "build_ir",
+                arguments_json = JsonUtility.ToJson(new BuildIrMenuArguments
+                {
+                    api_base_url = Environment.GetEnvironmentVariable("GAMEUIAGENT_API_BASE_URL"),
+                    access_token = Environment.GetEnvironmentVariable("GAMEUIAGENT_API_TOKEN"),
+                    project_id = Environment.GetEnvironmentVariable("GAMEUIAGENT_PROJECT_ID"),
+                    engine = "unity",
+                    source = "unity_mcp_menu",
+                    snapshot_json = File.ReadAllText(snapshotPath)
+                })
+            });
+            Debug.Log("GameUIAgent MCP build_ir response: " + JsonUtility.ToJson(response));
+        }
+
         [System.Serializable]
         private sealed class ToolDescriptorList
         {
@@ -76,6 +104,17 @@ namespace GameUIAgent.Editor
         private sealed class BuildSnapshotMenuArguments
         {
             public string texture_asset_path;
+        }
+
+        [System.Serializable]
+        private sealed class BuildIrMenuArguments
+        {
+            public string api_base_url;
+            public string access_token;
+            public string project_id;
+            public string engine;
+            public string source;
+            public string snapshot_json;
         }
     }
 }

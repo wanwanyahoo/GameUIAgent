@@ -43,12 +43,27 @@ namespace GameUIAgent.Editor
                     return snapshotTool.Execute(request);
                 }
 
+                if (tool is GameUIAgentBuildIrTool buildIrTool)
+                {
+                    return buildIrTool.Execute(request);
+                }
+
                 return new GameUIAgentToolResponse
                 {
                     tool_name = request.tool_name,
                     status = "error",
                     error_code = "INTERNAL_ERROR",
                     error_message = "Resolved tool does not support execution"
+                };
+            }
+            catch (InvalidOperationException ex)
+            {
+                return new GameUIAgentToolResponse
+                {
+                    tool_name = request.tool_name,
+                    status = "error",
+                    error_code = "BRIDGE_FAILED",
+                    error_message = ex.Message
                 };
             }
             catch (ArgumentException ex)

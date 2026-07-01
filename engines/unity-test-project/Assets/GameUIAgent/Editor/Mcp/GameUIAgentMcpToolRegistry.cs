@@ -4,13 +4,15 @@ namespace GameUIAgent.Editor
     {
         private readonly GameUIAgentImportPackageTool importPackageTool = new GameUIAgentImportPackageTool();
         private readonly GameUIAgentBuildSnapshotTool buildSnapshotTool = new GameUIAgentBuildSnapshotTool();
+        private readonly GameUIAgentBuildIrTool buildIrTool = new GameUIAgentBuildIrTool();
 
         public GameUIAgentToolDescriptor[] ListTools()
         {
             return new[]
             {
                 importPackageTool.Descriptor,
-                buildSnapshotTool.Descriptor
+                buildSnapshotTool.Descriptor,
+                buildIrTool.Descriptor
             };
         }
 
@@ -23,6 +25,10 @@ namespace GameUIAgent.Editor
             if (toolName == "build_snapshot")
             {
                 return buildSnapshotTool;
+            }
+            if (toolName == "build_ir")
+            {
+                return buildIrTool;
             }
             return null;
         }

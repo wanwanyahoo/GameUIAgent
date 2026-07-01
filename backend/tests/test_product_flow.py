@@ -4085,6 +4085,8 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     tool_request = editor_root / "Contracts" / "GameUIAgentToolRequest.cs"
     tool_response = editor_root / "Contracts" / "GameUIAgentToolResponse.cs"
     tool_descriptor = editor_root / "Contracts" / "GameUIAgentToolDescriptor.cs"
+    build_ir_request = editor_root / "Contracts" / "GameUIAgentBuildIrRequest.cs"
+    build_ir_result = editor_root / "Contracts" / "GameUIAgentBuildIrResult.cs"
     import_service = editor_root / "Importer" / "GameUIAgentImportService.cs"
     asset_materializer = editor_root / "Importer" / "GameUIAgentAssetMaterializer.cs"
     prefab_builder = editor_root / "Importer" / "GameUIAgentPrefabBuilder.cs"
@@ -4093,8 +4095,10 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     path_utility = editor_root / "Importer" / "GameUIAgentPathUtility.cs"
     mcp_registry = editor_root / "Mcp" / "GameUIAgentMcpToolRegistry.cs"
     mcp_dispatcher = editor_root / "Mcp" / "GameUIAgentMcpDispatcher.cs"
+    mcp_backend_bridge = editor_root / "Mcp" / "GameUIAgentBackendBridge.cs"
     mcp_import_tool = editor_root / "Mcp" / "GameUIAgentImportPackageTool.cs"
     mcp_snapshot_tool = editor_root / "Mcp" / "GameUIAgentBuildSnapshotTool.cs"
+    mcp_build_ir_tool = editor_root / "Mcp" / "GameUIAgentBuildIrTool.cs"
     mcp_menu = editor_root / "Mcp" / "GameUIAgentMcpMenu.cs"
     package_manifest = project_root / "Packages" / "manifest.json"
     project_version = project_root / "ProjectSettings" / "ProjectVersion.txt"
@@ -4109,6 +4113,8 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     assert tool_request.exists()
     assert tool_response.exists()
     assert tool_descriptor.exists()
+    assert build_ir_request.exists()
+    assert build_ir_result.exists()
     assert import_service.exists()
     assert asset_materializer.exists()
     assert prefab_builder.exists()
@@ -4117,8 +4123,10 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     assert path_utility.exists()
     assert mcp_registry.exists()
     assert mcp_dispatcher.exists()
+    assert mcp_backend_bridge.exists()
     assert mcp_import_tool.exists()
     assert mcp_snapshot_tool.exists()
+    assert mcp_build_ir_tool.exists()
     assert mcp_menu.exists()
     assert runner_script.exists()
 
@@ -4181,23 +4189,44 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     assert "description" in tool_descriptor_source
     assert "input_schema_json" in tool_descriptor_source
 
+    build_ir_request_source = build_ir_request.read_text(encoding="utf-8")
+    assert "project_id" in build_ir_request_source
+    assert "engine" in build_ir_request_source
+    assert "snapshot_json" in build_ir_request_source
+    assert "snapshot_id" in build_ir_request_source
+
+    build_ir_result_source = build_ir_result.read_text(encoding="utf-8")
+    assert "project_id" in build_ir_result_source
+    assert "snapshot_id" in build_ir_result_source
+    assert "ir_id" in build_ir_result_source
+
     mcp_registry_source = mcp_registry.read_text(encoding="utf-8")
     assert "GameUIAgentToolDescriptor" in mcp_registry_source
     assert "ListTools" in mcp_registry_source
     assert "Resolve" in mcp_registry_source
     assert "import_package" in mcp_registry_source
     assert "build_snapshot" in mcp_registry_source
-    assert "build_ir" not in mcp_registry_source
+    assert "build_ir" in mcp_registry_source
     assert "restyle" not in mcp_registry_source
     assert "GameUIAgentImportPackageTool" in mcp_registry_source
     assert "GameUIAgentBuildSnapshotTool" in mcp_registry_source
+    assert "GameUIAgentBuildIrTool" in mcp_registry_source
 
     mcp_dispatcher_source = mcp_dispatcher.read_text(encoding="utf-8")
     assert "GameUIAgentToolRequest" in mcp_dispatcher_source
     assert "GameUIAgentToolResponse" in mcp_dispatcher_source
     assert "UNKNOWN_TOOL" in mcp_dispatcher_source
     assert "INVALID_ARGUMENTS" in mcp_dispatcher_source
+    assert "BRIDGE_FAILED" in mcp_dispatcher_source
     assert "Resolve" in mcp_dispatcher_source
+    assert "GameUIAgentBuildIrTool" in mcp_dispatcher_source
+
+    mcp_backend_bridge_source = mcp_backend_bridge.read_text(encoding="utf-8")
+    assert "/api/projects/" in mcp_backend_bridge_source
+    assert "/engine-snapshots" in mcp_backend_bridge_source
+    assert "/build-ir" in mcp_backend_bridge_source
+    assert "GameUIAgentBuildIrRequest" in mcp_backend_bridge_source
+    assert "GameUIAgentBuildIrResult" in mcp_backend_bridge_source
 
     mcp_import_tool_source = mcp_import_tool.read_text(encoding="utf-8")
     assert "GameUIAgentToolRequest" in mcp_import_tool_source
@@ -4209,10 +4238,17 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     assert "GameUIAgentToolResponse" in mcp_snapshot_tool_source
     assert "GameUIAgentSnapshotBuilder" in mcp_snapshot_tool_source
 
+    mcp_build_ir_tool_source = mcp_build_ir_tool.read_text(encoding="utf-8")
+    assert "GameUIAgentToolRequest" in mcp_build_ir_tool_source
+    assert "GameUIAgentToolResponse" in mcp_build_ir_tool_source
+    assert "GameUIAgentBackendBridge" in mcp_build_ir_tool_source
+    assert "GameUIAgentBuildIrRequest" in mcp_build_ir_tool_source
+
     mcp_menu_source = mcp_menu.read_text(encoding="utf-8")
     assert "GameUIAgent/MCP/List Tools" in mcp_menu_source
     assert "GameUIAgent/MCP/Run Import Package" in mcp_menu_source
     assert "GameUIAgent/MCP/Run Build Snapshot" in mcp_menu_source
+    assert "GameUIAgent/MCP/Run Build IR" in mcp_menu_source
 
 
 def test_unreal_plugin_import_logs_can_be_queried_with_summary():
