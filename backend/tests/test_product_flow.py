@@ -4100,6 +4100,15 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     mcp_snapshot_tool = editor_root / "Mcp" / "GameUIAgentBuildSnapshotTool.cs"
     mcp_build_ir_tool = editor_root / "Mcp" / "GameUIAgentBuildIrTool.cs"
     mcp_menu = editor_root / "Mcp" / "GameUIAgentMcpMenu.cs"
+    transport_root = editor_root / "Transport"
+    transport_contracts = transport_root / "GameUIAgentTransportContracts.cs"
+    transport_host = transport_root / "GameUIAgentTransportHost.cs"
+    transport_http_server = transport_root / "GameUIAgentTransportHttpServer.cs"
+    transport_websocket_server = transport_root / "GameUIAgentTransportWebSocketServer.cs"
+    transport_session_store = transport_root / "GameUIAgentTransportSessionStore.cs"
+    transport_auth_service = transport_root / "GameUIAgentTransportAuthService.cs"
+    transport_invoke_bridge = transport_root / "GameUIAgentTransportInvokeBridge.cs"
+    transport_event_bus = transport_root / "GameUIAgentTransportEventBus.cs"
     package_manifest = project_root / "Packages" / "manifest.json"
     project_version = project_root / "ProjectSettings" / "ProjectVersion.txt"
 
@@ -4128,6 +4137,14 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     assert mcp_snapshot_tool.exists()
     assert mcp_build_ir_tool.exists()
     assert mcp_menu.exists()
+    assert transport_contracts.exists()
+    assert transport_host.exists()
+    assert transport_http_server.exists()
+    assert transport_websocket_server.exists()
+    assert transport_session_store.exists()
+    assert transport_auth_service.exists()
+    assert transport_invoke_bridge.exists()
+    assert transport_event_bus.exists()
     assert runner_script.exists()
 
     runner_source = runner_script.read_text(encoding="utf-8")
@@ -4249,6 +4266,66 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     assert "GameUIAgent/MCP/Run Import Package" in mcp_menu_source
     assert "GameUIAgent/MCP/Run Build Snapshot" in mcp_menu_source
     assert "GameUIAgent/MCP/Run Build IR" in mcp_menu_source
+
+    transport_contracts_source = transport_contracts.read_text(encoding="utf-8")
+    assert "session_id" in transport_contracts_source
+    assert "request_id" in transport_contracts_source
+    assert "task_id" in transport_contracts_source
+    assert "payload_json" in transport_contracts_source
+
+    transport_host_source = transport_host.read_text(encoding="utf-8")
+    assert "GameUIAgentTransportHttpServer" in transport_host_source
+    assert "GameUIAgentTransportWebSocketServer" in transport_host_source
+    assert "GameUIAgentTransportSessionStore" in transport_host_source
+    assert "GameUIAgentTransportAuthService" in transport_host_source
+    assert "GameUIAgentTransportInvokeBridge" in transport_host_source
+
+    transport_http_source = transport_http_server.read_text(encoding="utf-8")
+    assert "/authenticate" in transport_http_source
+    assert "/healthz" in transport_http_source
+    assert "/tools" in transport_http_source
+    assert "/invoke" in transport_http_source
+    assert "import_package" in transport_http_source
+    assert "build_snapshot" in transport_http_source
+    assert "build_ir" in transport_http_source
+    assert "restyle" not in transport_http_source
+
+    transport_websocket_source = transport_websocket_server.read_text(encoding="utf-8")
+    assert "connected" in transport_websocket_source
+    assert "authenticated" in transport_websocket_source
+    assert "tool_started" in transport_websocket_source
+    assert "tool_progress" in transport_websocket_source
+    assert "tool_log" in transport_websocket_source
+    assert "tool_succeeded" in transport_websocket_source
+    assert "tool_failed" in transport_websocket_source
+    assert "heartbeat" in transport_websocket_source
+
+    transport_session_store_source = transport_session_store.read_text(encoding="utf-8")
+    assert "session_id" in transport_session_store_source
+    assert "connection_id" in transport_session_store_source
+    assert "authorized_tools" in transport_session_store_source
+    assert "last_seen_at" in transport_session_store_source
+
+    transport_auth_source = transport_auth_service.read_text(encoding="utf-8")
+    assert "project_id" in transport_auth_source
+    assert "engine" in transport_auth_source
+    assert "authorized_tools" in transport_auth_source
+    assert "import_package" in transport_auth_source
+    assert "build_snapshot" in transport_auth_source
+    assert "build_ir" in transport_auth_source
+
+    transport_invoke_bridge_source = transport_invoke_bridge.read_text(encoding="utf-8")
+    assert "GameUIAgentMcpDispatcher" in transport_invoke_bridge_source
+    assert "GameUIAgentToolRequest" in transport_invoke_bridge_source
+    assert "GameUIAgentToolResponse" in transport_invoke_bridge_source
+    assert "tool_started" in transport_invoke_bridge_source
+    assert "tool_succeeded" in transport_invoke_bridge_source
+    assert "tool_failed" in transport_invoke_bridge_source
+
+    transport_event_bus_source = transport_event_bus.read_text(encoding="utf-8")
+    assert "Publish" in transport_event_bus_source
+    assert "connected" in transport_event_bus_source
+    assert "heartbeat" in transport_event_bus_source
 
 
 def test_unreal_plugin_import_logs_can_be_queried_with_summary():
