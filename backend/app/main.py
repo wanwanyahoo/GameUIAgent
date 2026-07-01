@@ -210,6 +210,16 @@ class PluginAuthRequest(BaseModel):
     device_name: str
 
 
+class PluginTokenRequest(BaseModel):
+    name: str
+    engine: str
+    scopes: list[str]
+
+
+class McpToolInvokeRequest(BaseModel):
+    arguments: dict[str, Any]
+
+
 store: ProductionStore = create_production_store()
 object_storage: LocalObjectStorage = create_object_storage()
 worker_token: str | None = getenv("GAMEUIAGENT_WORKER_TOKEN")
@@ -1524,9 +1534,45 @@ def plugin_export_jobs(user: dict[str, Any] = Depends(current_user)) -> dict[str
     return {"jobs": jobs}
 
 
+@app.post("/api/plugin/tokens", status_code=status.HTTP_201_CREATED)
+def create_plugin_token(payload: PluginTokenRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    if payload.engine not in supported_plugin_engines():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported plugin engine")
+    raw_token = f"gup_{token_hex(24)}"
+    token = {
+        "id": make_id("gup"),
+        "name": payload.name,
+        "engine": payload.engine,
+        "scopes": payload.scopes,
+        "status": "active",
+        "token": raw_token,
+        "user_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    store["plugin_tokens"][token["id"]] = token
+    store.flush()
+    return token
+
+
+@app.delete("/api/plugin/tokens/{token_id}")
+def revoke_plugin_token(token_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    token = require_plugin_token_record(token_id, user)
+    token["status"] = "revoked"
+    token["revoked_at"] = datetime.now(timezone.utc).isoformat()
+    store.flush()
+    return {"id": token["id"], "status": token["status"]}
+
+
 @app.post("/api/plugin/auth")
 def plugin_auth(payload: PluginAuthRequest) -> dict[str, Any]:
-    email = store["tokens"].get(payload.token)
+    plugin_token = find_active_plugin_token(payload.token, payload.engine)
+    if plugin_token:
+        user = next((item for item in store["users"].values() if item["id"] == plugin_token["user_id"]), None)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid plugin token")
+        email = user["email"]
+    else:
+        email = store["tokens"].get(payload.token)
     if not email:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid plugin token")
     user = store["users"][email]
@@ -1534,13 +1580,17 @@ def plugin_auth(payload: PluginAuthRequest) -> dict[str, Any]:
     device = {
         "id": make_id("dev"),
         "user_id": user["id"],
+        "plugin_token_id": plugin_token["id"] if plugin_token else None,
+        "scopes": plugin_token["scopes"] if plugin_token else ["legacy:session"],
         "engine": payload.engine,
         "engine_version": payload.engine_version,
         "plugin_version": payload.plugin_version,
         "device_name": payload.device_name,
+        "connected_at": datetime.now(timezone.utc).isoformat(),
     }
     store["plugin_devices"][device["id"]] = device
     store["tokens"][access_token] = email
+    store.flush()
     return {
         "access_token": access_token,
         "expires_in": 3600,
@@ -2251,31 +2301,193 @@ def restyle_engine_snapshot(
         for node in snapshot["layout"].get("nodes", [])
         for binding in node.get("bindings", [])
     ]
+    restyle_id = make_id("rst")
+    replacements = [
+        build_restyle_replacement(snapshot, sprite, payload.theme_name)
+        for sprite in snapshot["sprites"]
+    ]
     manifest = {
+        "schema_version": "gameuiagent.restyle.v1",
         "project_id": project["id"],
+        "engine": snapshot["engine"],
         "strategy": payload.replacement_strategy,
         "theme_name": payload.theme_name,
         "preserve_layout": payload.preserve_layout,
         "layout_policy": "preserve_rect_transform",
         "preserved_bindings": preserved_bindings,
-        "replacements": [
+        "apply_url": f"/api/plugin/restyles/{restyle_id}/apply",
+        "operations": [
             {
-                "source": sprite["path"],
-                "target": sprite["path"].replace(".png", f".{payload.theme_name}.png"),
-                "role": sprite.get("role", "image"),
-                "node_path": matching_layout_node(snapshot, sprite).get("path"),
-                "rect": matching_layout_node(snapshot, sprite).get("rect"),
+                "op": "replace_sprite_preserve_rect",
+                "source": replacement["source"],
+                "target": replacement["target"],
+                "node_path": replacement["node_path"],
+                "rect": replacement["rect"],
             }
-            for sprite in snapshot["sprites"]
+            for replacement in replacements
         ],
+        "replacements": replacements,
     }
-    return {
-        "id": make_id("rst"),
+    restyle = {
+        "id": restyle_id,
         "snapshot_id": snapshot_id,
+        "project_id": project["id"],
         "status": "ready",
         "style_prompt": payload.style_prompt,
         "replacement_manifest": manifest,
     }
+    store["restyles"][restyle_id] = restyle
+    store.flush()
+    return restyle
+
+
+@app.post("/api/plugin/engine-snapshots/{snapshot_id}/build-ir", status_code=status.HTTP_201_CREATED)
+def build_ir_from_engine_snapshot(snapshot_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    snapshot = require_engine_snapshot(snapshot_id, user)
+    project = require_project(snapshot["project_id"], user)
+    ir = build_ir_from_snapshot(project, snapshot)
+    store["irs"][ir["id"]] = ir
+    append_audit_event(
+        project["id"],
+        "engine_snapshot_ir_built",
+        user["id"],
+        "ir",
+        ir["id"],
+        metadata={"snapshot_id": snapshot_id, "engine": snapshot["engine"]},
+    )
+    store.flush()
+    return {"snapshot_id": snapshot_id, "ir": ir}
+
+
+@app.get("/api/plugin/mcp/tools")
+def list_mcp_tools(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    return {"tools": mcp_tool_catalog()}
+
+
+@app.post("/api/plugin/mcp/tools/{tool_name}/invoke", status_code=status.HTTP_201_CREATED)
+def invoke_mcp_tool(
+    tool_name: str,
+    payload: McpToolInvokeRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    if tool_name != "engine.snapshot.build_ir":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP tool not found")
+    snapshot_id = str(payload.arguments.get("snapshot_id") or "")
+    snapshot = require_engine_snapshot(snapshot_id, user)
+    project = require_project(snapshot["project_id"], user)
+    ir = build_ir_from_snapshot(project, snapshot)
+    store["irs"][ir["id"]] = ir
+    invocation = {
+        "id": make_id("mcp"),
+        "tool": tool_name,
+        "status": "succeeded",
+        "arguments": payload.arguments,
+        "result": {"snapshot_id": snapshot_id, "ir": ir},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    store["mcp_invocations"][invocation["id"]] = invocation
+    store.flush()
+    return invocation
+
+
+def require_plugin_token_record(token_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    token = store["plugin_tokens"].get(token_id)
+    if not token or token["user_id"] != user["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plugin token not found")
+    return token
+
+
+def find_active_plugin_token(raw_token: str, engine: str) -> dict[str, Any] | None:
+    return next(
+        (
+            token
+            for token in store["plugin_tokens"].values()
+            if token["token"] == raw_token and token["engine"] == engine and token["status"] == "active"
+        ),
+        None,
+    )
+
+
+def require_engine_snapshot(snapshot_id: str, user: dict[str, Any]) -> dict[str, Any]:
+    snapshot = store["snapshots"].get(snapshot_id)
+    if not snapshot:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
+    require_project(snapshot["project_id"], user)
+    return snapshot
+
+
+def build_ir_from_snapshot(project: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
+    canvas = snapshot["layout"].get("canvas") or project["canvas"]
+    nodes = [build_ir_node_from_snapshot_node(node) for node in snapshot["layout"].get("nodes", [])]
+    if not nodes:
+        nodes = build_demo_ir(project)["nodes"]
+    return {
+        "id": make_id("ir"),
+        "project_id": project["id"],
+        "version": "0.1.0",
+        "engine_targets": supported_plugin_engines(),
+        "canvas": canvas,
+        "nodes": nodes,
+        "professional_source": {
+            "source_type": f"{snapshot['engine']}-engine-snapshot",
+            "snapshot_id": snapshot["id"],
+            "source": snapshot["source"],
+        },
+    }
+
+
+def build_ir_node_from_snapshot_node(node: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(node.get("id") or node.get("path") or make_id("node")),
+        "type": node.get("type", "panel"),
+        "name": node.get("name") or str(node.get("path") or node.get("id") or "Engine Node").split("/")[-1],
+        "rect": node.get("rect", {"x": 0, "y": 0, "width": 1, "height": 1}),
+        "parent_id": node.get("parent_id"),
+        "component": {
+            "engine_path": node.get("path"),
+            "bindings": node.get("bindings", []),
+        },
+        "visible": node.get("visible", True),
+        "opacity": node.get("opacity", 1),
+    }
+
+
+def build_restyle_replacement(snapshot: dict[str, Any], sprite: dict[str, Any], theme_name: str) -> dict[str, Any]:
+    layout_node = matching_layout_node(snapshot, sprite)
+    target = sprite["path"].replace(".png", f".{theme_name}.png")
+    checksum = sha256(f"{snapshot['id']}:{sprite['path']}:{target}".encode("utf-8")).hexdigest()
+    return {
+        "source": sprite["path"],
+        "target": target,
+        "role": sprite.get("role", "image"),
+        "node_path": layout_node.get("path"),
+        "rect": layout_node.get("rect"),
+        "checksum": f"sha256:{checksum}",
+    }
+
+
+def mcp_tool_catalog() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "engine.snapshot.build_ir",
+            "description": "Convert a Unity/Cocos/Godot/Unreal editor snapshot into editable Asset IR.",
+            "input_schema": {
+                "type": "object",
+                "required": ["snapshot_id"],
+                "properties": {"snapshot_id": {"type": "string"}},
+            },
+            "output_schema": {"type": "object", "required": ["ir"]},
+        },
+        {
+            "name": "engine.snapshot.restyle",
+            "description": "Create a replacement manifest for an existing engine UI snapshot.",
+            "input_schema": {
+                "type": "object",
+                "required": ["snapshot_id", "style_prompt", "theme_name"],
+            },
+            "output_schema": {"type": "object", "required": ["replacement_manifest"]},
+        },
+    ]
 
 
 def validate_team_role(role: str) -> None:

@@ -59,6 +59,35 @@ export type PluginExportArchive = {
   content: ArrayBuffer;
 };
 
+export type PluginToken = {
+  id: string;
+  name: string;
+  engine: string;
+  scopes: string[];
+  status: string;
+  token: string;
+  createdAt: string;
+};
+
+export type McpTool = {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+};
+
+export type McpInvocation = {
+  id: string;
+  tool: string;
+  status: string;
+  result: any;
+};
+
+export type EngineSnapshotIrResult = {
+  snapshotId: string;
+  ir: any;
+};
+
 type PluginProjectExportsDto = {
   exports: Array<{
     id: string;
@@ -105,6 +134,111 @@ type PluginExportDownloadDto = {
   files: PluginExportDownload["files"];
   checksum: string;
 };
+
+type PluginTokenDto = {
+  id: string;
+  name: string;
+  engine: string;
+  scopes: string[];
+  status: string;
+  token: string;
+  created_at: string;
+};
+
+type McpToolDto = {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+};
+
+type McpInvocationDto = {
+  id: string;
+  tool: string;
+  status: string;
+  result: any;
+};
+
+type EngineSnapshotIrResultDto = {
+  snapshot_id: string;
+  ir: any;
+};
+
+export async function createPluginToken(options: {
+  name: string;
+  engine: string;
+  scopes: string[];
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<PluginToken> {
+  const dto = await pluginJsonRequest<PluginTokenDto>({
+    path: "/api/plugin/tokens",
+    token: options.token,
+    fetcher: options.fetcher,
+    init: {
+      method: "POST",
+      body: JSON.stringify({ name: options.name, engine: options.engine, scopes: options.scopes })
+    }
+  });
+  return mapPluginToken(dto);
+}
+
+export async function revokePluginToken(options: {
+  tokenId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<{ id: string; status: string }> {
+  return pluginJsonRequest({
+    path: `/api/plugin/tokens/${options.tokenId}`,
+    token: options.token,
+    fetcher: options.fetcher,
+    init: { method: "DELETE" }
+  });
+}
+
+export async function fetchMcpTools(options: {
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<McpTool[]> {
+  const dto = await pluginJsonRequest<{ tools: McpToolDto[] }>({
+    path: "/api/plugin/mcp/tools",
+    token: options.token,
+    fetcher: options.fetcher
+  });
+  return dto.tools.map(mapMcpTool);
+}
+
+export async function invokeMcpTool(options: {
+  toolName: string;
+  arguments: Record<string, unknown>;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<McpInvocation> {
+  const dto = await pluginJsonRequest<McpInvocationDto>({
+    path: `/api/plugin/mcp/tools/${options.toolName}/invoke`,
+    token: options.token,
+    fetcher: options.fetcher,
+    init: {
+      method: "POST",
+      body: JSON.stringify({ arguments: options.arguments })
+    }
+  });
+  return dto;
+}
+
+export async function buildEngineSnapshotIr(options: {
+  snapshotId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<EngineSnapshotIrResult> {
+  const dto = await pluginJsonRequest<EngineSnapshotIrResultDto>({
+    path: `/api/plugin/engine-snapshots/${options.snapshotId}/build-ir`,
+    token: options.token,
+    fetcher: options.fetcher,
+    init: { method: "POST" }
+  });
+  return { snapshotId: dto.snapshot_id, ir: dto.ir };
+}
 
 export async function fetchPluginProjectExports(options: {
   projectId: string;
@@ -273,6 +407,51 @@ function mapPluginImportLog(dto: PluginImportLogDto): PluginImportLog {
     durationMs: dto.duration_ms,
     summary: dto.summary,
     logs: dto.logs
+  };
+}
+
+async function pluginJsonRequest<T>(options: {
+  path: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+  init?: RequestInit;
+}): Promise<T> {
+  const fetcher = options.fetcher ?? fetch;
+  const response = await fetcher(
+    options.path,
+    {
+      ...options.init,
+      headers: {
+        "Authorization": `Bearer ${options.token}`,
+        "Content-Type": "application/json",
+        ...(options.init?.headers ?? {})
+      }
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Plugin request failed: ${options.path}`);
+  }
+  return await response.json() as T;
+}
+
+function mapPluginToken(dto: PluginTokenDto): PluginToken {
+  return {
+    id: dto.id,
+    name: dto.name,
+    engine: dto.engine,
+    scopes: dto.scopes,
+    status: dto.status,
+    token: dto.token,
+    createdAt: dto.created_at
+  };
+}
+
+function mapMcpTool(dto: McpToolDto): McpTool {
+  return {
+    name: dto.name,
+    description: dto.description,
+    inputSchema: dto.input_schema,
+    outputSchema: dto.output_schema
   };
 }
 

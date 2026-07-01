@@ -2299,6 +2299,149 @@ def test_project_ai_segmentation_and_unity_export_flow():
     assert plugin_response.json()["jobs"][0]["id"] == export["id"]
 
 
+def test_plugin_token_lifecycle_authenticates_and_revokes_engine_device():
+    headers = auth_headers()
+
+    token_response = client.post(
+        "/api/plugin/tokens",
+        headers=headers,
+        json={"name": "Unity editor", "engine": "unity", "scopes": ["projects:read", "exports:read", "imports:write"]},
+    )
+
+    assert token_response.status_code == 201
+    plugin_token = token_response.json()
+    assert plugin_token["token"].startswith("gup_")
+    assert plugin_token["engine"] == "unity"
+    assert plugin_token["status"] == "active"
+
+    auth_response = client.post(
+        "/api/plugin/auth",
+        json={
+            "token": plugin_token["token"],
+            "engine": "unity",
+            "engine_version": "2022.3",
+            "plugin_version": "1.0.0",
+            "device_name": "CI Unity",
+        },
+    )
+
+    assert auth_response.status_code == 200
+    auth_payload = auth_response.json()
+    assert auth_payload["access_token"].startswith("ptok")
+    assert auth_payload["device"]["plugin_token_id"] == plugin_token["id"]
+    assert auth_payload["device"]["scopes"] == ["projects:read", "exports:read", "imports:write"]
+
+    revoke_response = client.delete(f"/api/plugin/tokens/{plugin_token['id']}", headers=headers)
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["status"] == "revoked"
+
+    revoked_auth = client.post(
+        "/api/plugin/auth",
+        json={
+            "token": plugin_token["token"],
+            "engine": "unity",
+            "engine_version": "2022.3",
+            "plugin_version": "1.0.0",
+            "device_name": "CI Unity",
+        },
+    )
+    assert revoked_auth.status_code == 401
+
+
+def test_engine_snapshot_builds_asset_ir_and_mcp_tool_invokes_it():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={"name": "Unity Snapshot UI", "target_engine": "unity", "canvas": {"width": 1920, "height": 1080}},
+    ).json()
+    snapshot = client.post(
+        f"/api/projects/{project['id']}/engine-snapshots",
+        headers=headers,
+        json={
+            "engine": "unity",
+            "source": "unity-editor",
+            "layout": {
+                "canvas": {"width": 1920, "height": 1080},
+                "nodes": [
+                    {"id": "Canvas", "name": "HUD Canvas", "type": "canvas", "path": "Canvas", "rect": {"x": 0, "y": 0, "width": 1920, "height": 1080}},
+                    {"id": "StartButton", "name": "Start Button", "type": "button", "path": "Canvas/StartButton", "parent_id": "Canvas", "rect": {"x": 840, "y": 760, "width": 360, "height": 112}, "bindings": ["StartButton"]},
+                ],
+            },
+            "sprites": [{"path": "Assets/UI/start.png", "role": "button", "node_path": "Canvas/StartButton"}],
+        },
+    ).json()
+
+    build_response = client.post(
+        f"/api/plugin/engine-snapshots/{snapshot['id']}/build-ir",
+        headers=headers,
+    )
+
+    assert build_response.status_code == 201
+    built = build_response.json()
+    assert built["ir"]["professional_source"]["source_type"] == "unity-engine-snapshot"
+    assert [node["id"] for node in built["ir"]["nodes"]] == ["Canvas", "StartButton"]
+    assert built["ir"]["nodes"][1]["component"]["engine_path"] == "Canvas/StartButton"
+
+    tools_response = client.get("/api/plugin/mcp/tools", headers=headers)
+    assert tools_response.status_code == 200
+    assert "engine.snapshot.build_ir" in [tool["name"] for tool in tools_response.json()["tools"]]
+
+    invoke_response = client.post(
+        "/api/plugin/mcp/tools/engine.snapshot.build_ir/invoke",
+        headers=headers,
+        json={"arguments": {"snapshot_id": snapshot["id"]}},
+    )
+
+    assert invoke_response.status_code == 201
+    invocation = invoke_response.json()
+    assert invocation["tool"] == "engine.snapshot.build_ir"
+    assert invocation["status"] == "succeeded"
+    assert invocation["result"]["ir"]["id"].startswith("ir")
+
+
+def test_engine_snapshot_restyle_returns_production_replacement_manifest():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={"name": "Restyle Snapshot UI", "target_engine": "unity", "canvas": {"width": 1280, "height": 720}},
+    ).json()
+    snapshot = client.post(
+        f"/api/projects/{project['id']}/engine-snapshots",
+        headers=headers,
+        json={
+            "engine": "unity",
+            "source": "unity-editor",
+            "layout": {
+                "nodes": [
+                    {"id": "ShopPanel", "path": "Canvas/ShopPanel", "rect": {"x": 120, "y": 80, "width": 800, "height": 480}, "bindings": ["shop_bg"]},
+                ],
+            },
+            "sprites": [{"path": "Assets/UI/shop_bg.png", "role": "panel"}],
+        },
+    ).json()
+
+    restyle_response = client.post(
+        f"/api/plugin/engine-snapshots/{snapshot['id']}/restyle",
+        headers=headers,
+        json={
+            "style_prompt": "dark fantasy obsidian shop UI",
+            "preserve_layout": True,
+            "replacement_strategy": "theme_variant",
+            "theme_name": "obsidian",
+        },
+    )
+
+    assert restyle_response.status_code == 201
+    manifest = restyle_response.json()["replacement_manifest"]
+    assert manifest["schema_version"] == "gameuiagent.restyle.v1"
+    assert manifest["engine"] == "unity"
+    assert manifest["apply_url"].startswith("/api/plugin/restyles/")
+    assert manifest["replacements"][0]["checksum"].startswith("sha256:")
+    assert manifest["operations"][0]["op"] == "replace_sprite_preserve_rect"
+
+
 def test_export_rejects_unsupported_target_engine():
     headers = auth_headers()
     project = client.post(

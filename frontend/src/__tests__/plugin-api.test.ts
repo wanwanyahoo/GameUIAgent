@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { fetchPluginExportArchive, fetchPluginExportDownload, fetchPluginImportLogs, fetchPluginProjectExports, submitPluginImportLog } from "../lib/plugin-api";
+import {
+  buildEngineSnapshotIr,
+  createPluginToken,
+  fetchMcpTools,
+  fetchPluginExportArchive,
+  fetchPluginExportDownload,
+  fetchPluginImportLogs,
+  fetchPluginProjectExports,
+  invokeMcpTool,
+  revokePluginToken,
+  submitPluginImportLog
+} from "../lib/plugin-api";
 
 describe("plugin API client", () => {
   it("queries Unreal plugin exports with engine metadata", async () => {
@@ -196,6 +207,59 @@ describe("plugin API client", () => {
     assert.equal(archive.exportId, "exp_unreal");
     assert.equal(archive.fileName, "exp_unreal.zip");
     assert.equal(new Uint8Array(archive.content)[0], 80);
+  });
+
+  it("manages plugin tokens and invokes MCP snapshot tools", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === "/api/plugin/tokens") {
+        return jsonResponse({
+          id: "gup_1",
+          name: "Unity",
+          engine: "unity",
+          scopes: ["projects:read"],
+          status: "active",
+          token: "gup_secret",
+          created_at: "2026-07-01T00:00:00Z"
+        });
+      }
+      if (url === "/api/plugin/tokens/gup_1") {
+        return jsonResponse({ id: "gup_1", status: "revoked" });
+      }
+      if (url === "/api/plugin/mcp/tools") {
+        return jsonResponse({ tools: [{ name: "engine.snapshot.build_ir", description: "Build IR", input_schema: {}, output_schema: {} }] });
+      }
+      if (url === "/api/plugin/mcp/tools/engine.snapshot.build_ir/invoke") {
+        return jsonResponse({ id: "mcp_1", tool: "engine.snapshot.build_ir", status: "succeeded", result: { ir: { id: "ir_1" } } });
+      }
+      return jsonResponse({ snapshot_id: "snp_1", ir: { id: "ir_2", nodes: [] } });
+    };
+
+    const token = await createPluginToken({
+      name: "Unity",
+      engine: "unity",
+      scopes: ["projects:read"],
+      token: "tok_1",
+      fetcher
+    });
+    const tools = await fetchMcpTools({ token: "tok_1", fetcher });
+    const invocation = await invokeMcpTool({
+      toolName: "engine.snapshot.build_ir",
+      arguments: { snapshot_id: "snp_1" },
+      token: "tok_1",
+      fetcher
+    });
+    const built = await buildEngineSnapshotIr({ snapshotId: "snp_1", token: "tok_1", fetcher });
+    const revoked = await revokePluginToken({ tokenId: "gup_1", token: "tok_1", fetcher });
+
+    assert.equal(calls[0]?.url, "/api/plugin/tokens");
+    assert.equal(calls[0]?.init?.body, JSON.stringify({ name: "Unity", engine: "unity", scopes: ["projects:read"] }));
+    assert.equal(token.token, "gup_secret");
+    assert.equal(tools[0]?.name, "engine.snapshot.build_ir");
+    assert.equal(invocation.result.ir.id, "ir_1");
+    assert.equal(built.ir.id, "ir_2");
+    assert.equal(revoked.status, "revoked");
   });
 });
 
