@@ -14,6 +14,7 @@ from io import BytesIO
 from os import getenv
 from re import sub
 from secrets import token_hex
+from tempfile import TemporaryDirectory
 from typing import Any
 from urllib.parse import quote
 from uuid import uuid4
@@ -1909,21 +1910,24 @@ def execute_engine_e2e_runner(export: dict[str, Any], timeout_seconds: int) -> d
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"{engine} editor executable does not exist: {executable}",
         )
-    env = {
-        **os.environ,
-        "GAMEUIAGENT_E2E_EXPORT_ID": export["id"],
-        "GAMEUIAGENT_E2E_ENGINE": engine,
-        "GAMEUIAGENT_E2E_MANIFEST_JSON": json.dumps(manifest),
-        "GAMEUIAGENT_E2E_PACKAGE_JSON": json.dumps(export["package"]),
-    }
-    completed = subprocess.run(
-        [executable],
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-        env=env,
-    )
+    with TemporaryDirectory(prefix="gameuiagent-engine-e2e-") as temp_dir:
+        zip_path = write_engine_e2e_export_zip(export, temp_dir)
+        env = {
+            **os.environ,
+            "GAMEUIAGENT_E2E_EXPORT_ID": export["id"],
+            "GAMEUIAGENT_E2E_ENGINE": engine,
+            "GAMEUIAGENT_E2E_MANIFEST_JSON": json.dumps(manifest),
+            "GAMEUIAGENT_E2E_PACKAGE_JSON": json.dumps(export["package"]),
+            "GAMEUIAGENT_E2E_ZIP_PATH": zip_path,
+        }
+        completed = subprocess.run(
+            [executable],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=env,
+        )
     if completed.returncode != 0:
         return {
             "status": "failed",
@@ -1949,6 +1953,21 @@ def execute_engine_e2e_runner(export: dict[str, Any], timeout_seconds: int) -> d
     result.setdefault("summary", {"warnings": 0, "errors": 0})
     result.setdefault("logs", [])
     return result
+
+
+def write_engine_e2e_export_zip(export: dict[str, Any], directory: str) -> str:
+    zip_path = os.path.join(directory, f"{export['id']}.zip")
+    write_export_package_zip(export, zip_path)
+    return zip_path
+
+
+def write_export_package_zip(export: dict[str, Any], zip_path: str) -> None:
+    package = export["package"]
+    manifest = package["manifest"]
+    with ZipFile(zip_path, mode="w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        for file_path in package["files"]:
+            archive.writestr(file_path, build_export_file_placeholder(export, file_path))
 
 
 def parse_engine_e2e_stdout(stdout: str) -> dict[str, Any]:

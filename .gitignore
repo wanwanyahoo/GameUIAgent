@@ -17,6 +17,14 @@ engines/**/Builds/
 engines/**/UserSettings/
 engines/**/Assets/GameUIAgent/Generated/
 engines/**/Assets/GameUIAgent/Generated.meta
+engines/**/Assets/GameUIAgent/Textures/
+engines/**/Assets/GameUIAgent/Textures.meta
+engines/**/Assets/GameUIAgent/Prefabs/
+engines/**/Assets/GameUIAgent/Prefabs.meta
+engines/**/Assets/GameUIAgent/Scenes/
+engines/**/Assets/GameUIAgent/Scenes.meta
+engines/**/Assets/GameUIAgent/Manifests/
+engines/**/Assets/GameUIAgent/Manifests.meta
 engines/**/*.csproj
 engines/**/*.sln
 unityhome/

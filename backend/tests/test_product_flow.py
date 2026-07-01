@@ -4012,6 +4012,67 @@ JSON
     assert body["import_log"]["logs"][0]["message"] == "Noisy Unity stdout tolerated"
 
 
+def test_engine_e2e_runner_passes_real_zip_export_to_unity_importer(tmp_path, monkeypatch):
+    headers = auth_headers()
+    created = create_unity_export(headers, "Zip Unity Import HUD")
+    export_id = created["export"]["id"]
+    runner = tmp_path / "zip-aware-unity-e2e-runner"
+    runner.write_text(
+        """#!/bin/sh
+python3 - <<'PY'
+import json
+import os
+import zipfile
+
+zip_path = os.environ.get("GAMEUIAGENT_E2E_ZIP_PATH")
+if not zip_path or not os.path.exists(zip_path):
+    raise SystemExit("missing GAMEUIAGENT_E2E_ZIP_PATH")
+
+with zipfile.ZipFile(zip_path) as archive:
+    names = archive.namelist()
+    manifest = json.loads(archive.read("manifest.json"))
+
+assert manifest["engine"] == "unity"
+assert manifest["entry"]["path"].endswith(".prefab")
+assert "Assets/GameUIAgent/Prefabs/ZipUnityImportHud.prefab" in names
+assert "Assets/GameUIAgent/Scenes/ZipUnityImportHud.unity" in names
+
+print(json.dumps({
+  "status": "succeeded",
+  "engine_version": "2022.3.11f1",
+  "plugin_version": "0.3.0",
+  "duration_ms": 88,
+  "summary": {"assets_imported": 4, "prefabs_created": 1, "scenes_created": 1, "warnings": 0, "errors": 0},
+  "logs": [{"level": "info", "message": "Unity importer consumed real zip export"}],
+  "snapshot": {
+    "source": "unity_zip_importer",
+    "layout": {
+      "screen": "ZipImportedHUD",
+      "nodes": [
+        {"id": "zip_root", "name": "Zip Imported HUD", "type": "canvas", "rect": {"x": 0, "y": 0, "width": 1280, "height": 720}},
+        {"id": "zip_cta", "name": "Zip CTA", "type": "button", "rect": {"x": 480, "y": 560, "width": 320, "height": 96}, "parent_id": "zip_root"}
+      ]
+    },
+    "sprites": [{"id": "zip_sprite", "name": "Zip Sprite", "path": "Assets/GameUIAgent/Textures/ZipUnityImportHud_atlas.png"}]
+  }
+}))
+PY
+""",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    monkeypatch.setenv("GAMEUIAGENT_UNITY_EXECUTABLE", str(runner))
+
+    response = client.post(f"/api/system/engine-e2e/exports/{export_id}/run")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "succeeded"
+    assert body["snapshot"]["source"] == "unity_zip_importer"
+    assert body["import_log"]["summary"]["scenes_created"] == 1
+    assert body["ir"]["nodes"][1]["name"] == "Zip CTA"
+
+
 def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     project_root = REPO_ROOT / "engines" / "unity-test-project"
     runner_script = project_root / "run-gameuiagent-e2e.sh"
@@ -4028,6 +4089,7 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     assert "-batchmode" in runner_source
     assert "-executeMethod GameUIAgent.Editor.GameUIAgentE2ERunner.Run" in runner_source
     assert "UNITY_EDITOR_EXECUTABLE" in runner_source
+    assert "GAMEUIAGENT_E2E_ZIP_PATH" in runner_source
     assert "GAMEUIAGENT_E2E_PACKAGE_JSON" in runner_source
     assert "GAMEUIAGENT_E2E_RESULT_PATH" in runner_source
     assert "cat \"$RESULT_PATH\"" in runner_source
@@ -4036,9 +4098,14 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     editor_source = editor_runner.read_text(encoding="utf-8")
     assert "namespace GameUIAgent.Editor" in editor_source
     assert "public static void Run()" in editor_source
+    assert "ZipFile.ExtractToDirectory" in editor_source
+    assert "TextureImporterType.Sprite" in editor_source
     assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_PACKAGE_JSON\")" in editor_source
+    assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_ZIP_PATH\")" in editor_source
     assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_RESULT_PATH\")" in editor_source
     assert "PrefabUtility.SaveAsPrefabAsset" in editor_source
+    assert "EditorSceneManager.SaveScene" in editor_source
+    assert "Path.Combine(projectRoot, normalized)" in editor_source
     assert "File.WriteAllText(resultPath" in editor_source
     assert "JsonUtility.ToJson" in editor_source
     assert "Console.Out.WriteLine" in editor_source
