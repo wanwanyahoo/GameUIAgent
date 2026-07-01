@@ -55,6 +55,7 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [activeProfessionalImport, setActiveProfessionalImport] = useState(false);
   const [activePluginImportId, setActivePluginImportId] = useState<string | null>(null);
   const [latestPluginImportLog, setLatestPluginImportLog] = useState<PluginImportLog | null>(null);
+  const [professionalImportFile, setProfessionalImportFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (!projectId) {
@@ -244,7 +245,7 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setActiveProfessionalImport(true);
       setError(null);
       setActionMessage(null);
-      const result = await runProfessionalImportAction({ token, project });
+      const result = await runProfessionalImportAction({ token, project, file: professionalImportFile });
       setActionMessage(result.message);
       const [latestStudio, latestAssets, latestExports] = await Promise.all([
         getStudioStateApi(token, project.id),
@@ -389,12 +390,21 @@ export function StudioPage({ projectId }: StudioPageProps) {
             <h3>Professional Import</h3>
             <div className="studio-professional-import">
               <p>PSD/PSB/Figma layers become editable Asset IR before export.</p>
+              <label className="studio-file-picker">
+                <span>{professionalImportFile ? professionalImportFile.name : "Choose PSD / PSB file"}</span>
+                <input
+                  type="file"
+                  accept=".psd,.psb,application/octet-stream"
+                  onChange={(event) => setProfessionalImportFile(event.currentTarget.files?.[0] ?? null)}
+                  disabled={activeProfessionalImport}
+                />
+              </label>
               <button
                 type="button"
                 onClick={handleProfessionalImport}
                 disabled={activeProfessionalImport}
               >
-                {activeProfessionalImport ? "Importing..." : "Import PSD + Export Unity"}
+                {activeProfessionalImport ? "Importing..." : professionalImportFile ? "Upload PSD + Export Unity" : "Import PSD + Export Unity"}
               </button>
             </div>
           </div>

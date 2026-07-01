@@ -17,6 +17,7 @@ import {
   listStudioAiJobs,
   previewStudioExportWizard,
   retryStudioAiJob,
+  uploadStudioAsset,
   updateStudioAsset
 } from "../lib/studio-api";
 import { runGeneratedAssetAction, runProfessionalImportAction, runStudioAction } from "../lib/studio-actions";
@@ -279,6 +280,57 @@ describe("studio API client", () => {
     assert.equal(imported.ir.id, "ir_psd");
   });
 
+  it("uploads PSD files as multipart assets for professional import", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const file = new File([new Uint8Array([56, 66, 80, 83])], "battle-hud.psd", {
+      type: "application/octet-stream"
+    });
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonResponse({
+        id: "ast_psd_upload",
+        project_id: "prj_1",
+        type: "psd",
+        name: "battle-hud.psd",
+        url: "/api/projects/prj_1/assets/ast_psd_upload/download",
+        source: "object_storage",
+        metadata: {
+          width: 1920,
+          height: 1080,
+          usage: "professional_import",
+          tags: ["psd", "professional-import"],
+          size_bytes: 4,
+          sha256: "sha256:test"
+        }
+      });
+    };
+
+    const asset = await uploadStudioAsset({
+      projectId: "prj_1",
+      token: "tok_1",
+      file,
+      type: "psd",
+      width: 1920,
+      height: 1080,
+      usage: "professional_import",
+      tags: ["psd", "professional-import"],
+      fetcher
+    });
+
+    const body = calls[0]?.init?.body as FormData;
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    assert.equal(calls[0]?.url, "/api/projects/prj_1/assets/upload");
+    assert.equal(calls[0]?.init?.method, "POST");
+    assert.equal(headers.Authorization, "Bearer tok_1");
+    assert.equal(headers["Content-Type"], undefined);
+    assert.equal(body.get("name"), "battle-hud.psd");
+    assert.equal(body.get("type"), "psd");
+    assert.equal(body.get("tags"), "psd,professional-import");
+    assert.equal((body.get("file") as File).name, "battle-hud.psd");
+    assert.equal(asset.id, "ast_psd_upload");
+    assert.equal(asset.metadata.sha256, "sha256:test");
+  });
+
   it("manages uploaded asset library operations", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = async (url: string, init?: RequestInit) => {
@@ -460,6 +512,60 @@ describe("studio API client", () => {
       { action: "export", value: "unity" }
     ]);
     assert.equal(result.message, "PSD imported into editable Asset IR and Unity export generated");
+  });
+
+  it("uses uploaded PSD files before professional import when a file is provided", async () => {
+    const calls: Array<{ action: string; value?: string }> = [];
+    const file = new File([new Uint8Array([56, 66, 80, 83])], "real-shop.psd", {
+      type: "application/octet-stream"
+    });
+
+    const result = await runProfessionalImportAction({
+      token: "tok_1",
+      project: {
+        id: "prj_1",
+        name: "Real PSD UI",
+        target_engine: "unity",
+        canvas: { width: 1920, height: 1080 },
+        status: "active",
+        owner_id: "usr_1",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      file,
+      clients: {
+        uploadAsset: async (options) => {
+          calls.push({ action: "upload", value: options.file.name });
+          return assetDto({ id: "ast_real_psd", name: options.file.name });
+        },
+        createImportSource: async (options) => {
+          calls.push({ action: "import", value: options.source.parser });
+          return {
+            id: "imp_real",
+            projectId: options.projectId,
+            status: "parsed",
+            source: {
+              sourceType: "psd",
+              assetId: options.source.assetId,
+              parser: options.source.parser ?? "mock-layer-parser"
+            },
+            parseSummary: { parser: "psd-layer-parser", preservedLayers: 2, warnings: [] },
+            ir: { id: "ir_real", projectId: options.projectId }
+          };
+        },
+        previewExport: async (options) => {
+          calls.push({ action: "export", value: options.targetEngine });
+          return { export: { id: "exp_real" } };
+        }
+      }
+    });
+
+    assert.deepEqual(calls, [
+      { action: "upload", value: "real-shop.psd" },
+      { action: "import", value: "psd-layer-parser" },
+      { action: "export", value: "unity" }
+    ]);
+    assert.equal(result.message, "PSD file uploaded, parsed into editable Asset IR and Unity export generated");
   });
 
   it("manages queued Studio AI jobs", async () => {

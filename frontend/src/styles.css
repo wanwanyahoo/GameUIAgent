@@ -4853,6 +4853,27 @@ a {
   font-weight: 800;
 }
 
+.studio-file-picker {
+  position: relative;
+  display: grid;
+  padding: 0.55rem 0.65rem;
+  color: rgba(232, 247, 255, 0.82);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(124, 248, 255, 0.28);
+  border-radius: 0.45rem;
+  cursor: pointer;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  overflow: hidden;
+}
+
+.studio-file-picker input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .studio-professional-import button:disabled {
   cursor: not-allowed;
   opacity: 0.55;

@@ -1,4 +1,4 @@
-import { createProfessionalImportSource, createStudioAiJob, createStudioAsset, createStudioSegmentation, applyStudioCorrection, previewStudioExportWizard } from "./studio-api";
+import { createProfessionalImportSource, createStudioAiJob, createStudioAsset, createStudioSegmentation, applyStudioCorrection, previewStudioExportWizard, uploadStudioAsset } from "./studio-api";
 import type { Project, StudioState } from "./projects-api";
 
 export type StudioActionId = "regenerate" | "open-slice-editor" | "apply-correction" | "export-package";
@@ -37,6 +37,7 @@ export type RunGeneratedAssetActionOptions = {
 
 export type ProfessionalImportActionClients = {
   createAsset: (options: Parameters<typeof createStudioAsset>[0]) => Promise<{ id: string; name: string }>;
+  uploadAsset: (options: Parameters<typeof uploadStudioAsset>[0]) => Promise<{ id: string; name: string }>;
   createImportSource: (options: Parameters<typeof createProfessionalImportSource>[0]) => Promise<unknown>;
   previewExport: (options: Parameters<typeof previewStudioExportWizard>[0]) => Promise<unknown>;
 };
@@ -44,6 +45,7 @@ export type ProfessionalImportActionClients = {
 export type RunProfessionalImportActionOptions = {
   token: string;
   project: Project;
+  file?: File | null;
   clients?: Partial<ProfessionalImportActionClients>;
 };
 
@@ -56,6 +58,7 @@ const defaultClients: StudioActionClients = {
 
 const defaultProfessionalImportClients: ProfessionalImportActionClients = {
   createAsset: createStudioAsset,
+  uploadAsset: uploadStudioAsset,
   createImportSource: createProfessionalImportSource,
   previewExport: previewStudioExportWizard,
 };
@@ -155,26 +158,37 @@ export async function runGeneratedAssetAction(options: RunGeneratedAssetActionOp
 export async function runProfessionalImportAction(options: RunProfessionalImportActionOptions): Promise<RunStudioActionResult> {
   const clients = { ...defaultProfessionalImportClients, ...options.clients };
   const psdName = `${options.project.name}.psd`;
-  const asset = await clients.createAsset({
-    projectId: options.project.id,
-    token: options.token,
-    asset: {
-      name: psdName,
-      type: "psd",
-      url: `s3://gameuiagent/imports/${safeAssetSlug(psdName)}`,
-      width: options.project.canvas.width,
-      height: options.project.canvas.height,
-      usage: "professional_import",
-      tags: ["psd", "professional-import", "editable-ir"]
-    },
-  });
+  const asset = options.file
+    ? await clients.uploadAsset({
+        projectId: options.project.id,
+        token: options.token,
+        file: options.file,
+        type: assetTypeForFile(options.file),
+        width: options.project.canvas.width,
+        height: options.project.canvas.height,
+        usage: "professional_import",
+        tags: ["psd", "professional-import", "editable-ir"]
+      })
+    : await clients.createAsset({
+        projectId: options.project.id,
+        token: options.token,
+        asset: {
+          name: psdName,
+          type: "psd",
+          url: `s3://gameuiagent/imports/${safeAssetSlug(psdName)}`,
+          width: options.project.canvas.width,
+          height: options.project.canvas.height,
+          usage: "professional_import",
+          tags: ["psd", "professional-import", "editable-ir"]
+        },
+      });
   const imported = await clients.createImportSource({
     projectId: options.project.id,
     token: options.token,
     source: {
-      sourceType: "psd",
+      sourceType: assetTypeForName(asset.name),
       assetId: asset.id,
-      parser: "mock-layer-parser",
+      parser: options.file ? "psd-layer-parser" : "mock-layer-parser",
     },
   });
   const exportResult = await clients.previewExport({
@@ -184,11 +198,21 @@ export async function runProfessionalImportAction(options: RunProfessionalImport
   });
   return {
     status: "ok",
-    message: "PSD imported into editable Asset IR and Unity export generated",
+    message: options.file
+      ? "PSD file uploaded, parsed into editable Asset IR and Unity export generated"
+      : "PSD imported into editable Asset IR and Unity export generated",
     result: { asset, imported, export: exportResult }
   };
 }
 
 function safeAssetSlug(name: string): string {
   return name.trim().replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "") || "professional-import.psd";
+}
+
+function assetTypeForFile(file: File): "psd" | "psb" {
+  return assetTypeForName(file.name);
+}
+
+function assetTypeForName(name: string): "psd" | "psb" {
+  return name.toLowerCase().endsWith(".psb") ? "psb" : "psd";
 }

@@ -56,6 +56,7 @@ export type StudioAsset = {
     height: number;
     usage: string;
     tags?: string[];
+    [key: string]: unknown;
   };
 };
 
@@ -249,6 +250,42 @@ export async function createStudioAsset(options: {
       body: JSON.stringify(options.asset)
     }
   );
+  return mapStudioAssetDto(await response.json() as StudioAssetDto);
+}
+
+export async function uploadStudioAsset(options: {
+  projectId: string;
+  token: string;
+  file: File;
+  type: string;
+  width: number;
+  height: number;
+  usage: string;
+  tags?: string[];
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioAsset> {
+  const form = new FormData();
+  form.set("name", options.file.name);
+  form.set("type", options.type);
+  form.set("width", String(options.width));
+  form.set("height", String(options.height));
+  form.set("usage", options.usage);
+  form.set("tags", (options.tags ?? []).join(","));
+  form.set("file", options.file);
+  const fetcher = options.fetcher ?? fetch;
+  const response = await fetcher(
+    `/api/projects/${options.projectId}/assets/upload`,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${options.token}`
+      },
+      body: form
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`Studio asset upload failed: ${options.file.name}`);
+  }
   return mapStudioAssetDto(await response.json() as StudioAssetDto);
 }
 
