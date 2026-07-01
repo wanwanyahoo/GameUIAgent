@@ -2873,6 +2873,27 @@ def test_studio_timeline_uses_selected_engine_export_task():
     assert wizard_response.json()["studio"]["timeline"][2]["kind"] == "cocos3_export"
 
 
+def test_new_project_studio_active_ir_is_readable():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Fresh Studio IR",
+            "target_engine": "unity",
+            "canvas": {"width": 1280, "height": 720},
+        },
+    ).json()
+
+    state_response = client.get(f"/api/projects/{project['id']}/studio", headers=headers)
+    assert state_response.status_code == 200
+    active_ir_id = state_response.json()["active_selection"]["active_ir_id"]
+
+    ir_response = client.get(f"/api/projects/{project['id']}/irs/{active_ir_id}", headers=headers)
+    assert ir_response.status_code == 200
+    assert ir_response.json()["ir"]["id"] == active_ir_id
+
+
 def test_studio_timeline_reflects_plugin_import_log_status():
     headers = auth_headers()
     project = client.post(

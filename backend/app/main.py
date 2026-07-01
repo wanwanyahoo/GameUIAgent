@@ -2947,6 +2947,7 @@ def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
             store.flush()
         return refresh_studio_runtime_state(project, studio)
     ir = latest_project_ir(project) or build_demo_ir(project)
+    store["irs"].setdefault(ir["id"], ir)
     button_node = next((node for node in ir["nodes"] if node["type"] == "button"), ir["nodes"][0])
     seed_asset = ensure_studio_seed_asset(project)
     studio = {
