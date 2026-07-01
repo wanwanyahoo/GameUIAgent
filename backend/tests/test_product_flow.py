@@ -4076,13 +4076,40 @@ PY
 def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     project_root = REPO_ROOT / "engines" / "unity-test-project"
     runner_script = project_root / "run-gameuiagent-e2e.sh"
-    editor_runner = project_root / "Assets" / "GameUIAgent" / "Editor" / "GameUIAgentE2ERunner.cs"
+    editor_root = project_root / "Assets" / "GameUIAgent" / "Editor"
+    editor_runner = editor_root / "Batchmode" / "GameUIAgentE2ERunner.cs"
+    import_request = editor_root / "Contracts" / "GameUIAgentImportRequest.cs"
+    import_result = editor_root / "Contracts" / "GameUIAgentImportResult.cs"
+    import_manifest = editor_root / "Contracts" / "UnityPackageManifest.cs"
+    snapshot_contract = editor_root / "Contracts" / "GameUIAgentSnapshot.cs"
+    import_service = editor_root / "Importer" / "GameUIAgentImportService.cs"
+    asset_materializer = editor_root / "Importer" / "GameUIAgentAssetMaterializer.cs"
+    prefab_builder = editor_root / "Importer" / "GameUIAgentPrefabBuilder.cs"
+    scene_builder = editor_root / "Importer" / "GameUIAgentSceneBuilder.cs"
+    snapshot_builder = editor_root / "Importer" / "GameUIAgentSnapshotBuilder.cs"
+    path_utility = editor_root / "Importer" / "GameUIAgentPathUtility.cs"
+    mcp_registry = editor_root / "Mcp" / "GameUIAgentMcpToolRegistry.cs"
+    mcp_import_tool = editor_root / "Mcp" / "GameUIAgentImportPackageTool.cs"
+    mcp_snapshot_tool = editor_root / "Mcp" / "GameUIAgentBuildSnapshotTool.cs"
     package_manifest = project_root / "Packages" / "manifest.json"
     project_version = project_root / "ProjectSettings" / "ProjectVersion.txt"
 
     assert project_version.exists()
     assert package_manifest.exists()
     assert editor_runner.exists()
+    assert import_request.exists()
+    assert import_result.exists()
+    assert import_manifest.exists()
+    assert snapshot_contract.exists()
+    assert import_service.exists()
+    assert asset_materializer.exists()
+    assert prefab_builder.exists()
+    assert scene_builder.exists()
+    assert snapshot_builder.exists()
+    assert path_utility.exists()
+    assert mcp_registry.exists()
+    assert mcp_import_tool.exists()
+    assert mcp_snapshot_tool.exists()
     assert runner_script.exists()
 
     runner_source = runner_script.read_text(encoding="utf-8")
@@ -4098,17 +4125,46 @@ def test_unity_test_project_contains_real_plugin_and_batchmode_runner():
     editor_source = editor_runner.read_text(encoding="utf-8")
     assert "namespace GameUIAgent.Editor" in editor_source
     assert "public static void Run()" in editor_source
-    assert "ZipFile.ExtractToDirectory" in editor_source
-    assert "TextureImporterType.Sprite" in editor_source
+    assert "GameUIAgentImportService" in editor_source
     assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_PACKAGE_JSON\")" in editor_source
     assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_ZIP_PATH\")" in editor_source
     assert "Environment.GetEnvironmentVariable(\"GAMEUIAGENT_E2E_RESULT_PATH\")" in editor_source
-    assert "PrefabUtility.SaveAsPrefabAsset" in editor_source
-    assert "EditorSceneManager.SaveScene" in editor_source
-    assert "Path.Combine(projectRoot, normalized)" in editor_source
     assert "File.WriteAllText(resultPath" in editor_source
     assert "JsonUtility.ToJson" in editor_source
     assert "Console.Out.WriteLine" in editor_source
+    assert "ZipFile.ExtractToDirectory" not in editor_source
+    assert "TextureImporterType.Sprite" not in editor_source
+    assert "PrefabUtility.SaveAsPrefabAsset" not in editor_source
+    assert "EditorSceneManager.SaveScene" not in editor_source
+
+    import_service_source = import_service.read_text(encoding="utf-8")
+    assert "GameUIAgentAssetMaterializer" in import_service_source
+    assert "GameUIAgentPrefabBuilder" in import_service_source
+    assert "GameUIAgentSceneBuilder" in import_service_source
+    assert "GameUIAgentSnapshotBuilder" in import_service_source
+
+    asset_materializer_source = asset_materializer.read_text(encoding="utf-8")
+    assert "ZipFile.ExtractToDirectory" in asset_materializer_source
+    assert "TextureImporterType.Sprite" in asset_materializer_source
+
+    prefab_builder_source = prefab_builder.read_text(encoding="utf-8")
+    assert "PrefabUtility.SaveAsPrefabAsset" in prefab_builder_source
+
+    scene_builder_source = scene_builder.read_text(encoding="utf-8")
+    assert "EditorSceneManager.SaveScene" in scene_builder_source
+
+    path_utility_source = path_utility.read_text(encoding="utf-8")
+    assert "Path.Combine(projectRoot, normalized)" in path_utility_source
+
+    mcp_registry_source = mcp_registry.read_text(encoding="utf-8")
+    assert "GameUIAgentImportPackageTool" in mcp_registry_source
+    assert "GameUIAgentBuildSnapshotTool" in mcp_registry_source
+
+    mcp_import_tool_source = mcp_import_tool.read_text(encoding="utf-8")
+    assert "GameUIAgentImportService" in mcp_import_tool_source
+
+    mcp_snapshot_tool_source = mcp_snapshot_tool.read_text(encoding="utf-8")
+    assert "GameUIAgentSnapshotBuilder" in mcp_snapshot_tool_source
 
 
 def test_unreal_plugin_import_logs_can_be_queried_with_summary():
