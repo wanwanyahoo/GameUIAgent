@@ -21,6 +21,7 @@ STORE_SECTIONS = [
     "imports",
     "api_keys",
     "webhooks",
+    "webhook_deliveries",
     "developer_tasks",
     "import_logs",
     "plugin_devices",

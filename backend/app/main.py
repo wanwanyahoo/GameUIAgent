@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import hmac
 import smtplib
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from hashlib import pbkdf2_hmac
+from hashlib import pbkdf2_hmac, sha256
 from hmac import compare_digest
 from io import BytesIO
 from os import getenv
@@ -1363,10 +1364,22 @@ def preview_studio_export_wizard(
             step["status"] = "active"
     studio["timeline"] = build_studio_timeline(project)
     store.flush()
+    webhook_deliveries = dispatch_user_webhook_event(
+        user["id"],
+        "export.completed",
+        {
+            "project_id": project["id"],
+            "export_id": export["id"],
+            "target_engine": payload.target_engine,
+            "package_kind": package["kind"],
+            "download_url": export["package"]["manifest"]["download_url"],
+        },
+    )
     return {
         "project_id": project["id"],
         "studio": studio,
         "export": export,
+        "webhook_deliveries": webhook_deliveries,
         "export_preview": {
             "target_engine": payload.target_engine,
             "entry": package["manifest"]["entry"]["path"],
@@ -1688,6 +1701,84 @@ WEBHOOK_EVENTS = [
 ]
 
 
+def event_matches_webhook(hook: dict[str, Any], event_type: str) -> bool:
+    return hook.get("active", False) and ("*" in hook["events"] or event_type in hook["events"])
+
+
+def sign_webhook_payload(secret: str, timestamp: str, body: bytes) -> str:
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        f"{timestamp}.".encode("utf-8") + body,
+        sha256,
+    ).hexdigest()
+    return f"sha256={digest}"
+
+
+def deliver_webhook_event(
+    hook: dict[str, Any],
+    event_type: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    delivery_id = make_id("whd")
+    timestamp = str(int(datetime.now(timezone.utc).timestamp()))
+    payload = {
+        "id": delivery_id,
+        "type": event_type,
+        "webhook_id": hook["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "data": data,
+    }
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "X-GameUIAgent-Event": event_type,
+        "X-GameUIAgent-Delivery": delivery_id,
+        "X-GameUIAgent-Timestamp": timestamp,
+        "X-GameUIAgent-Signature": sign_webhook_payload(hook["secret"], timestamp, body),
+    }
+    delivery = {
+        "id": delivery_id,
+        "webhook_id": hook["id"],
+        "event": event_type,
+        "url": hook["url"],
+        "status": "failed",
+        "attempt": 1,
+        "created_at": payload["created_at"],
+        "delivered_at": None,
+        "response_status": None,
+        "error": None,
+    }
+    try:
+        response = httpx.post(hook["url"], content=body, headers=headers, timeout=5)
+        delivery["response_status"] = response.status_code
+        if 200 <= response.status_code < 300:
+            delivery["status"] = "succeeded"
+            delivery["delivered_at"] = datetime.now(timezone.utc).isoformat()
+            hook["success_count"] = hook.get("success_count", 0) + 1
+            hook["last_sent_at"] = delivery["delivered_at"]
+        else:
+            hook["failure_count"] = hook.get("failure_count", 0) + 1
+            delivery["error"] = f"HTTP {response.status_code}"
+    except httpx.HTTPError as exc:
+        hook["failure_count"] = hook.get("failure_count", 0) + 1
+        delivery["error"] = str(exc)
+    store["webhook_deliveries"][delivery_id] = delivery
+    store.flush()
+    return delivery
+
+
+def dispatch_user_webhook_event(
+    user_id: str,
+    event_type: str,
+    data: dict[str, Any],
+) -> list[dict[str, Any]]:
+    deliveries = []
+    for hook in store["webhooks"].values():
+        if hook["user_id"] == user_id and event_matches_webhook(hook, event_type):
+            deliveries.append(deliver_webhook_event(hook, event_type, data))
+    return deliveries
+
+
 @app.get("/api/user/webhooks")
 def list_webhooks(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     hooks = [
@@ -1705,9 +1796,7 @@ def create_webhook(payload: WebhookCreateRequest, user: dict[str, Any] = Depends
         if ev not in WEBHOOK_EVENTS and ev != "*":
             raise HTTPException(status_code=400, detail=f"Invalid event: {ev}")
 
-    import hmac
     import secrets
-    from hashlib import sha256
 
     secret = f"whsec_{secrets.token_hex(24)}"
     webhook = {
@@ -1754,6 +1843,20 @@ def get_webhook(webhook_id: str, user: dict[str, Any] = Depends(current_user)) -
     return {k: v for k, v in hook.items() if k != "secret"}
 
 
+@app.get("/api/user/webhooks/{webhook_id}/deliveries")
+def list_webhook_deliveries(webhook_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    hook = store["webhooks"].get(webhook_id)
+    if not hook or hook["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    deliveries = [
+        delivery
+        for delivery in store["webhook_deliveries"].values()
+        if delivery["webhook_id"] == hook["id"]
+    ]
+    deliveries.sort(key=lambda item: item["created_at"], reverse=True)
+    return {"webhook_id": hook["id"], "deliveries": deliveries[:50]}
+
+
 @app.patch("/api/user/webhooks/{webhook_id}")
 def update_webhook(webhook_id: str, payload: WebhookUpdateRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     hook = store["webhooks"].get(webhook_id)
@@ -1794,10 +1897,20 @@ def test_webhook(webhook_id: str, user: dict[str, Any] = Depends(current_user)) 
     if not hook or hook["user_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Webhook not found")
 
+    delivery = deliver_webhook_event(
+        hook,
+        "ai.job.completed",
+        {
+            "test": True,
+            "user_id": user["id"],
+            "message": "GameUIAgent test webhook delivery",
+        },
+    )
     return {
         "status": "test_queued",
         "webhook_id": webhook_id,
         "event": "ai.job.completed",
+        "delivery": delivery,
         "message": "Test webhook event has been queued for delivery",
     }
 

@@ -1,5 +1,10 @@
 from binascii import crc32
+import hashlib
+import hmac
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from io import BytesIO
+from threading import Thread
 from uuid import uuid4
 from zipfile import ZipFile
 from zlib import compress
@@ -3653,6 +3658,152 @@ def test_webhooks_crud_flow(tmp_path):
 
     list_final = client.get("/api/user/webhooks", headers=headers).json()
     assert len(list_final["webhooks"]) == 0
+
+
+def test_webhook_test_event_posts_signed_delivery_and_updates_metrics(tmp_path):
+    configure_persistent_store(str(tmp_path / "webhook-delivery.sqlite3"))
+    configure_object_storage(str(tmp_path / "webhook-delivery-objects"))
+
+    deliveries: list[dict[str, object]] = []
+
+    class Receiver(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(content_length)
+            deliveries.append({
+                "path": self.path,
+                "headers": dict(self.headers),
+                "body": body,
+            })
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Receiver)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        email = f"wh-delivery-{uuid4().hex}@gameuiagent.dev"
+        client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "WH User"})
+        login = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+        create_resp = client.post("/api/user/webhooks", headers=headers, json={
+            "url": f"http://127.0.0.1:{server.server_port}/gameuiagent",
+            "events": ["ai.job.completed"],
+            "description": "Signed local receiver",
+        })
+        assert create_resp.status_code == 201
+        created = create_resp.json()
+
+        test_resp = client.post(f"/api/user/webhooks/{created['id']}/test", headers=headers)
+        assert test_resp.status_code == 200
+        assert test_resp.json()["status"] == "test_queued"
+        assert test_resp.json()["delivery"]["status"] == "succeeded"
+
+        assert len(deliveries) == 1
+        delivery = deliveries[0]
+        body = delivery["body"]
+        delivery_headers = delivery["headers"]
+        assert delivery["path"] == "/gameuiagent"
+        assert delivery_headers["X-GameUIAgent-Event"] == "ai.job.completed"
+        assert delivery_headers["X-GameUIAgent-Delivery"].startswith("whd_")
+        timestamp = delivery_headers["X-GameUIAgent-Timestamp"]
+        expected_signature = "sha256=" + hmac.new(
+            created["secret"].encode("utf-8"),
+            f"{timestamp}.".encode("utf-8") + body,
+            hashlib.sha256,
+        ).hexdigest()
+        assert delivery_headers["X-GameUIAgent-Signature"] == expected_signature
+        payload = json.loads(body)
+        assert payload["type"] == "ai.job.completed"
+        assert payload["webhook_id"] == created["id"]
+        assert payload["data"]["test"] is True
+
+        listed = client.get("/api/user/webhooks", headers=headers).json()["webhooks"][0]
+        assert listed["success_count"] == 1
+        assert listed["failure_count"] == 0
+        assert listed["last_sent_at"] is not None
+
+        delivery_log = client.get(f"/api/user/webhooks/{created['id']}/deliveries", headers=headers)
+        assert delivery_log.status_code == 200
+        logged = delivery_log.json()["deliveries"][0]
+        assert logged["event"] == "ai.job.completed"
+        assert logged["status"] == "succeeded"
+        assert logged["response_status"] == 204
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
+
+
+def test_export_completed_event_delivers_to_subscribed_webhook(tmp_path):
+    configure_persistent_store(str(tmp_path / "webhook-export.sqlite3"))
+    configure_object_storage(str(tmp_path / "webhook-export-objects"))
+
+    deliveries: list[dict[str, object]] = []
+
+    class Receiver(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(content_length)
+            deliveries.append({
+                "headers": dict(self.headers),
+                "body": body,
+            })
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), Receiver)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        email = f"wh-export-{uuid4().hex}@gameuiagent.dev"
+        client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "Export WH"})
+        login = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        project = client.post("/api/projects", headers=headers, json={
+            "name": "Webhook Export",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        }).json()
+
+        create_resp = client.post("/api/user/webhooks", headers=headers, json={
+            "url": f"http://127.0.0.1:{server.server_port}/export",
+            "events": ["export.completed"],
+            "description": "Export receiver",
+        })
+        assert create_resp.status_code == 201
+        created = create_resp.json()
+
+        export_resp = client.post(
+            f"/api/projects/{project['id']}/studio/export-wizard",
+            headers=headers,
+            json={"target_engine": "unity"},
+        )
+        assert export_resp.status_code == 200
+        export = export_resp.json()["export"]
+
+        assert len(deliveries) == 1
+        delivery = deliveries[0]
+        assert delivery["headers"]["X-GameUIAgent-Event"] == "export.completed"
+        payload = json.loads(delivery["body"])
+        assert payload["type"] == "export.completed"
+        assert payload["data"]["project_id"] == project["id"]
+        assert payload["data"]["export_id"] == export["id"]
+        assert payload["data"]["target_engine"] == "unity"
+        assert payload["webhook_id"] == created["id"]
+
+        listed = client.get("/api/user/webhooks", headers=headers).json()["webhooks"][0]
+        assert listed["success_count"] == 1
+        assert listed["failure_count"] == 0
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
 
 
 def test_webhooks_validation(tmp_path):
