@@ -1103,6 +1103,165 @@ def test_qwen_async_provider_submit_poll_and_cancel(tmp_path, monkeypatch):
     configure_inference_provider("local-deterministic")
 
 
+def test_qwen_async_provider_polls_configured_endpoint_and_blocks_cancelled_completion(tmp_path, monkeypatch):
+    configure_persistent_store(str(tmp_path / "qwen-async-http.sqlite3"))
+    configure_object_storage(str(tmp_path / "objects-qwen-async-http"))
+    configure_inference_provider("qwen-async")
+    monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
+    monkeypatch.setenv("QWEN_ASYNC_SUBMIT_ENDPOINT", "https://qwen.example.test/tasks")
+    monkeypatch.setenv("QWEN_ASYNC_POLL_ENDPOINT", "https://qwen.example.test/tasks/{provider_job_id}")
+    monkeypatch.setenv("QWEN_ASYNC_CANCEL_ENDPOINT", "https://qwen.example.test/tasks/{provider_job_id}/cancel")
+    monkeypatch.setattr("app.main.download_generated_image", lambda *_args: "/objects/qwen-async-http.png")
+
+    class FakeQwenResponse:
+        def __init__(self, payload: dict[str, object]):
+            self.payload = payload
+            self.status_code = 200
+            self.text = json.dumps(payload)
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self.payload
+
+    posted_urls: list[str] = []
+    fetched_urls: list[str] = []
+
+    def fake_post(url, *_args, **_kwargs):
+        posted_urls.append(url)
+        if url.endswith("/cancel"):
+            return FakeQwenResponse({"status": "CANCELLED"})
+        return FakeQwenResponse({"task_id": "qwen-task-001", "status": "PENDING"})
+
+    def fake_get(url, *_args, **_kwargs):
+        fetched_urls.append(url)
+        return FakeQwenResponse(
+            {
+                "task_id": "qwen-task-001",
+                "status": "SUCCEEDED",
+                "output": {
+                    "results": [
+                        {
+                            "url": "https://cdn.example.test/qwen-result.png",
+                            "layered_slices": [
+                                {
+                                    "id": "qwen_async_button",
+                                    "type": "button",
+                                    "name": "Qwen Async Button",
+                                    "rect": {"x": 96, "y": 120, "width": 240, "height": 88},
+                                    "confidence": 0.93,
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.main.httpx.post", fake_post)
+    monkeypatch.setattr("app.main.httpx.get", fake_get)
+    try:
+        headers = auth_headers()
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "Configured Qwen Async", "target_engine": "unity", "canvas": {"width": 1280, "height": 720}},
+        ).json()
+
+        job = client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={"kind": "text_to_image", "prompt": "configured async hud", "execution_mode": "queued"},
+        ).json()
+        submitted = client.post("/api/system/ai-worker/run-next").json()
+
+        provider_job_id = submitted["job"]["inference"]["provider_job_id"]
+        assert provider_job_id == "qwen-task-001"
+        assert posted_urls[0] == "https://qwen.example.test/tasks"
+
+        polled = client.post(f"/api/system/ai-worker/provider-jobs/{provider_job_id}/poll").json()
+        assert polled["status"] == "succeeded"
+        assert polled["job"]["id"] == job["id"]
+        assert polled["job"]["result_asset"]["url"] == "/objects/qwen-async-http.png"
+        assert polled["job"]["result_asset"]["metadata"]["layered_slices"][0]["id"] == "qwen_async_button"
+        assert fetched_urls == ["https://qwen.example.test/tasks/qwen-task-001"]
+
+        cancelled = client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={"kind": "text_to_image", "prompt": "cancel before poll", "execution_mode": "queued"},
+        ).json()
+        submitted_cancel = client.post("/api/system/ai-worker/run-next").json()
+        cancelled_provider_job_id = submitted_cancel["job"]["inference"]["provider_job_id"]
+        cancel_response = client.post(
+            f"/api/projects/{project['id']}/ai/jobs/{submitted_cancel['job']['id']}/cancel",
+            headers=headers,
+        )
+
+        assert cancel_response.status_code == 200
+        assert posted_urls[-1] == "https://qwen.example.test/tasks/qwen-task-001/cancel"
+        polled_after_cancel = client.post(f"/api/system/ai-worker/provider-jobs/{cancelled_provider_job_id}/poll")
+        assert polled_after_cancel.status_code == 200
+        assert polled_after_cancel.json()["status"] == "cancelled"
+        assert "result_asset" not in polled_after_cancel.json()["job"]
+        assert cancelled["id"] != job["id"]
+    finally:
+        configure_inference_provider("local-deterministic")
+
+
+def test_qwen_async_poll_normalizes_remote_failure(tmp_path, monkeypatch):
+    configure_persistent_store(str(tmp_path / "qwen-async-failed.sqlite3"))
+    configure_inference_provider("qwen-async")
+    monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
+    monkeypatch.setenv("QWEN_ASYNC_SUBMIT_ENDPOINT", "https://qwen.example.test/tasks")
+    monkeypatch.setenv("QWEN_ASYNC_POLL_ENDPOINT", "https://qwen.example.test/tasks/{provider_job_id}")
+
+    class FakeQwenResponse:
+        status_code = 200
+        text = '{"status": "FAILED"}'
+
+        def __init__(self, payload: dict[str, object]):
+            self.payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return self.payload
+
+    monkeypatch.setattr("app.main.httpx.post", lambda *_args, **_kwargs: FakeQwenResponse({"id": "qwen-task-failed", "status": "PENDING"}))
+    monkeypatch.setattr(
+        "app.main.httpx.get",
+        lambda *_args, **_kwargs: FakeQwenResponse({"id": "qwen-task-failed", "status": "FAILED", "code": "ContentSafety", "message": "blocked"}),
+    )
+    try:
+        headers = auth_headers()
+        project = client.post(
+            "/api/projects",
+            headers=headers,
+            json={"name": "Failed Qwen Async", "target_engine": "unity", "canvas": {"width": 512, "height": 512}},
+        ).json()
+        client.post(
+            f"/api/projects/{project['id']}/ai/jobs",
+            headers=headers,
+            json={"kind": "text_to_image", "prompt": "unsafe", "execution_mode": "queued"},
+        )
+        submitted = client.post("/api/system/ai-worker/run-next").json()
+        provider_job_id = submitted["job"]["inference"]["provider_job_id"]
+
+        polled = client.post(f"/api/system/ai-worker/provider-jobs/{provider_job_id}/poll")
+
+        assert polled.status_code == 200
+        body = polled.json()
+        assert body["status"] == "failed"
+        assert body["provider_job"]["error"]["code"] == "ContentSafety"
+        assert body["job"]["status"] == "failed"
+        assert body["job"]["error"] == "ContentSafety: blocked"
+    finally:
+        configure_inference_provider("local-deterministic")
+
+
 def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkeypatch):
     db_path = tmp_path / "qwen-layered-slice.sqlite3"
     configure_persistent_store(str(db_path))
@@ -3775,6 +3934,52 @@ def test_unity_plugin_manifest_download_and_import_log_flow():
     )
     assert log_response.status_code == 201
     assert log_response.json()["summary"]["prefabs_created"] == 1
+
+
+def test_real_engine_e2e_runner_executes_editor_and_records_import_snapshot_ir(tmp_path, monkeypatch):
+    headers = auth_headers()
+    created = create_unity_export(headers, "Real Editor HUD")
+    export_id = created["export"]["id"]
+    runner = tmp_path / "unity-e2e-runner"
+    runner.write_text(
+        """#!/bin/sh
+cat <<'JSON'
+{
+  "status": "succeeded",
+  "engine_version": "2022.3.40f1",
+  "plugin_version": "0.3.0",
+  "duration_ms": 4200,
+  "summary": {"assets_imported": 4, "prefabs_created": 1, "warnings": 0, "errors": 0},
+  "logs": [{"level": "info", "message": "Imported from real Unity batch mode"}],
+  "snapshot": {
+    "source": "unity_batchmode",
+    "layout": {
+      "screen": "RuntimeHUD",
+      "nodes": [
+        {"id": "root", "name": "Runtime HUD", "type": "canvas", "rect": {"x": 0, "y": 0, "width": 1280, "height": 720}},
+        {"id": "cta", "name": "Play CTA", "type": "button", "rect": {"x": 480, "y": 560, "width": 320, "height": 96}, "parent_id": "root"}
+      ]
+    },
+    "sprites": [{"id": "cta_sprite", "name": "Play CTA Sprite", "path": "Assets/GameUIAgent/Textures/cta.png"}]
+  }
+}
+JSON
+""",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    monkeypatch.setenv("GAMEUIAGENT_UNITY_EXECUTABLE", str(runner))
+
+    response = client.post(f"/api/system/engine-e2e/exports/{export_id}/run")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["status"] == "succeeded"
+    assert body["engine"] == "unity"
+    assert body["import_log"]["summary"]["prefabs_created"] == 1
+    assert body["snapshot"]["source"] == "unity_batchmode"
+    assert body["ir"]["nodes"][1]["name"] == "Play CTA"
+    assert body["command"]["executable"] == str(runner)
 
 
 def test_unreal_plugin_import_logs_can_be_queried_with_summary():

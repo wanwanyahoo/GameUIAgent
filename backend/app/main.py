@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import hmac
+import os
 import smtplib
+import subprocess
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -200,6 +202,10 @@ class PluginImportLogRequest(BaseModel):
     duration_ms: int
     summary: dict[str, int]
     logs: list[dict[str, str]]
+
+
+class EngineE2ERunRequest(BaseModel):
+    timeout_seconds: int = Field(default=120, ge=1, le=3600)
 
 
 class PluginAuthRequest(BaseModel):
@@ -1243,9 +1249,23 @@ def poll_provider_job(provider_job_id: str, _worker_authorized: bool = Depends(r
         provider_job["error"] = "Provider job lost its queue, job or project"
         store.flush()
         return {"status": "failed", "provider_job": provider_job, "job": job}
-    result = qwen_async_poll(provider_job)
+    if provider_job.get("status") == "cancelled" or job.get("status") == "cancelled" or queue_item.get("status") == "cancelled":
+        provider_job["status"] = "cancelled"
+        job["status"] = "cancelled"
+        queue_item["status"] = "cancelled"
+        store.flush()
+        return {"status": "cancelled", "provider_job": provider_job, "job": job}
+    provider_job["poll_attempts"] = provider_job.get("poll_attempts", 0) + 1
+    try:
+        result = qwen_async_poll(provider_job)
+    except RuntimeError as exc:
+        result = {
+            "status": "failed",
+            "error": {"code": "ProviderPollError", "message": str(exc)},
+        }
     provider_job["status"] = result["status"]
     provider_job["last_polled_at"] = datetime.now(timezone.utc).isoformat()
+    provider_job["raw_response"] = result.get("raw_response", provider_job.get("raw_response"))
     if result["status"] == "succeeded":
         inference_result = {
             "run_id": provider_job["run_id"],
@@ -1259,9 +1279,15 @@ def poll_provider_job(provider_job_id: str, _worker_authorized: bool = Depends(r
         job["queue"] = queue_item
         append_audit_event(project["id"], "ai_job_succeeded", None, "ai_job", job["id"], status_value="succeeded")
     elif result["status"] == "failed":
+        provider_job["error"] = result.get("error", {"code": "ProviderFailed", "message": "Provider job failed"})
         queue_item["status"] = "dead_letter"
         job["status"] = "failed"
-        job["error"] = result.get("error", "Provider job failed")
+        job["progress"] = 0
+        job["error"] = qwen_error_message(provider_job["error"])
+    elif result["status"] in {"submitted", "running"}:
+        queue_item["status"] = "provider_waiting"
+        job["status"] = "processing"
+        job["progress"] = 60
     store.flush()
     return {"status": provider_job["status"], "provider_job": provider_job, "job": job}
 
@@ -1852,6 +1878,147 @@ def plugin_export_import_logs(export_id: str, user: dict[str, Any] = Depends(cur
         "latest_log": logs[-1] if logs else None,
         "logs": logs,
     }
+
+
+@app.post("/api/system/engine-e2e/exports/{export_id}/run", status_code=status.HTTP_201_CREATED)
+def run_engine_export_e2e(export_id: str, payload: EngineE2ERunRequest | None = None) -> dict[str, Any]:
+    export = store["exports"].get(export_id)
+    if not export:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export not found")
+    project = store["projects"].get(export["project_id"])
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    request = payload or EngineE2ERunRequest()
+    result = execute_engine_e2e_runner(export, request.timeout_seconds)
+    run = record_engine_e2e_result(project, export, result)
+    store.flush()
+    return run
+
+
+def execute_engine_e2e_runner(export: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
+    manifest = export["package"]["manifest"]
+    engine = manifest["engine"]
+    executable = engine_e2e_executable(engine)
+    if not executable:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{engine} editor executable is not configured",
+        )
+    if not os.path.exists(executable):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{engine} editor executable does not exist: {executable}",
+        )
+    env = {
+        **os.environ,
+        "GAMEUIAGENT_E2E_EXPORT_ID": export["id"],
+        "GAMEUIAGENT_E2E_ENGINE": engine,
+        "GAMEUIAGENT_E2E_MANIFEST_JSON": json.dumps(manifest),
+        "GAMEUIAGENT_E2E_PACKAGE_JSON": json.dumps(export["package"]),
+    }
+    completed = subprocess.run(
+        [executable],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        env=env,
+    )
+    if completed.returncode != 0:
+        return {
+            "status": "failed",
+            "engine": engine,
+            "engine_version": manifest.get("engine_version", ""),
+            "plugin_version": "unknown",
+            "duration_ms": 0,
+            "summary": {"errors": 1, "warnings": 0},
+            "logs": [{"level": "error", "message": completed.stderr[:1000] or "Engine runner failed"}],
+            "stderr": completed.stderr[:4000],
+        }
+    try:
+        result = json.loads(completed.stdout)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Engine runner returned invalid JSON",
+        ) from exc
+    result.setdefault("status", "succeeded")
+    result.setdefault("engine_version", manifest.get("engine_version", ""))
+    result.setdefault("plugin_version", "unknown")
+    result.setdefault("duration_ms", 0)
+    result.setdefault("summary", {"warnings": 0, "errors": 0})
+    result.setdefault("logs", [])
+    return result
+
+
+def engine_e2e_executable(engine: str) -> str | None:
+    env_names = {
+        "unity": "GAMEUIAGENT_UNITY_EXECUTABLE",
+        "cocos3": "GAMEUIAGENT_COCOS3_EXECUTABLE",
+        "cocos2": "GAMEUIAGENT_COCOS2_EXECUTABLE",
+        "godot": "GAMEUIAGENT_GODOT_EXECUTABLE",
+        "unreal": "GAMEUIAGENT_UNREAL_EXECUTABLE",
+    }
+    return getenv(env_names.get(engine, ""))
+
+
+def record_engine_e2e_result(project: dict[str, Any], export: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    manifest = export["package"]["manifest"]
+    engine = manifest["engine"]
+    run = {
+        "id": make_id("ee2e"),
+        "export_id": export["id"],
+        "project_id": project["id"],
+        "engine": engine,
+        "status": result["status"],
+        "engine_version": result["engine_version"],
+        "plugin_version": result["plugin_version"],
+        "duration_ms": result["duration_ms"],
+        "summary": result["summary"],
+        "logs": result["logs"],
+        "command": {"executable": engine_e2e_executable(engine)},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    store["engine_e2e_runs"][run["id"]] = run
+    import_log = {
+        "id": make_id("ilog"),
+        "export_id": export["id"],
+        "engine": engine,
+        "status": result["status"],
+        "plugin_version": result["plugin_version"],
+        "engine_version": result["engine_version"],
+        "duration_ms": result["duration_ms"],
+        "summary": result["summary"],
+        "logs": result["logs"],
+    }
+    store["import_logs"][import_log["id"]] = import_log
+    export["last_import_log_id"] = import_log["id"]
+    run["import_log"] = import_log
+    snapshot_payload = result.get("snapshot")
+    if isinstance(snapshot_payload, dict):
+        snapshot = {
+            "id": make_id("snp"),
+            "project_id": project["id"],
+            "engine": engine,
+            "source": snapshot_payload.get("source", f"{engine}_editor_e2e"),
+            "layout": snapshot_payload.get("layout", {}),
+            "sprites": snapshot_payload.get("sprites", []),
+        }
+        store["snapshots"][snapshot["id"]] = snapshot
+        ir = build_ir_from_snapshot(project, snapshot)
+        store["irs"][ir["id"]] = ir
+        run["snapshot"] = snapshot
+        run["ir"] = ir
+    append_audit_event(
+        project["id"],
+        "engine_e2e_completed",
+        None,
+        "engine_e2e_run",
+        run["id"],
+        status_value=run["status"],
+        metadata={"export_id": export["id"], "engine": engine},
+    )
+    return run
 
 
 @app.post("/api/user/api-keys", status_code=status.HTTP_201_CREATED)
@@ -3175,6 +3342,22 @@ def qwen_inference_endpoint() -> str:
     return getenv("QWEN_IMAGE_ENDPOINT", "https://dashscope.aliyuncs.com/compatible-mode/v1/images/generations")
 
 
+def qwen_async_submit_endpoint() -> str:
+    return getenv("QWEN_ASYNC_SUBMIT_ENDPOINT", qwen_inference_endpoint())
+
+
+def qwen_async_poll_endpoint(provider_job_id: str) -> str:
+    template = getenv("QWEN_ASYNC_POLL_ENDPOINT", "")
+    if not template:
+        raise RuntimeError("Qwen async poll adapter is not configured")
+    return template.format(provider_job_id=quote(provider_job_id, safe=""))
+
+
+def qwen_async_cancel_endpoint(provider_job_id: str) -> str | None:
+    template = getenv("QWEN_ASYNC_CANCEL_ENDPOINT")
+    return template.format(provider_job_id=quote(provider_job_id, safe="")) if template else None
+
+
 def build_inference_request(project: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
     input_asset = job.get("input_asset")
     reference_asset = job.get("reference_asset")
@@ -3248,6 +3431,8 @@ def create_provider_job(
         "project_id": project["id"],
         "queue_id": queue_item["id"],
         "status": inference_result["status"],
+        "raw_response": inference_result.get("raw_response"),
+        "poll_attempts": 0,
         "submitted_at": datetime.now(timezone.utc).isoformat(),
     }
     store["provider_jobs"][provider_job["provider_job_id"]] = provider_job
@@ -3283,19 +3468,167 @@ def qwen_async_submit(request: dict[str, Any]) -> dict[str, Any]:
     api_key = getenv("QWEN_API_KEY")
     if not api_key:
         raise RuntimeError("Inference provider is not configured")
-    payload = qwen_request_inference(api_key, request)
+    payload = qwen_request_async(api_key, request)
     return {
-        "provider_job_id": payload.get("id") or payload.get("request_id") or make_id("qwen"),
+        "provider_job_id": extract_qwen_provider_job_id(payload) or make_id("qwen"),
         "status": "submitted",
+        "raw_response": payload,
     }
 
 
 def qwen_async_poll(provider_job: dict[str, Any]) -> dict[str, Any]:
-    raise RuntimeError(f"Qwen async poll adapter is not configured for {provider_job['provider_job_id']}")
+    if provider_job.get("status") == "cancelled":
+        return {"status": "cancelled", "provider_job_id": provider_job["provider_job_id"]}
+    api_key = getenv("QWEN_API_KEY")
+    if not api_key:
+        raise RuntimeError("Inference provider is not configured")
+    payload = qwen_request_async_poll(api_key, provider_job["provider_job_id"])
+    normalized_status = normalize_qwen_async_status(payload.get("status") or payload.get("task_status"))
+    if normalized_status == "succeeded":
+        remote_url = extract_qwen_asset_url(payload)
+        if not remote_url:
+            raise RuntimeError("Qwen async provider returned no asset URL")
+        job = store["jobs"].get(provider_job["job_id"], {})
+        local_asset_url = download_generated_image(
+            provider_job["project_id"],
+            provider_job["job_id"],
+            remote_url,
+            job.get("parameters", {}).get("size", "1024x1024"),
+        )
+        return {
+            "status": "succeeded",
+            "asset_url": local_asset_url,
+            "remote_asset_url": remote_url,
+            "provider_job_id": provider_job["provider_job_id"],
+            "layered_slices": extract_qwen_layered_slices(payload),
+            "raw_response": payload,
+        }
+    if normalized_status == "failed":
+        return {
+            "status": "failed",
+            "provider_job_id": provider_job["provider_job_id"],
+            "error": normalize_qwen_provider_error(payload),
+            "raw_response": payload,
+        }
+    return {
+        "status": normalized_status,
+        "provider_job_id": provider_job["provider_job_id"],
+        "raw_response": payload,
+    }
 
 
 def qwen_async_cancel(provider_job: dict[str, Any]) -> dict[str, Any]:
-    return {"status": "cancelled", "provider_job_id": provider_job["provider_job_id"]}
+    api_key = getenv("QWEN_API_KEY")
+    endpoint = qwen_async_cancel_endpoint(provider_job["provider_job_id"])
+    if not api_key or not endpoint:
+        return {"status": "cancelled", "provider_job_id": provider_job["provider_job_id"]}
+    try:
+        response = httpx.post(endpoint, headers={"Authorization": f"Bearer {api_key}"}, timeout=QWEN_INFERENCE_TIMEOUT)
+        response.raise_for_status()
+        payload = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"Inference provider cancel HTTP {exc.response.status_code}: {qwen_response_detail(exc.response)}") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Inference provider cancel network error: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError("Inference provider cancel returned invalid JSON") from exc
+    return {
+        "status": normalize_qwen_async_status(payload.get("status") or payload.get("task_status") or "cancelled"),
+        "provider_job_id": provider_job["provider_job_id"],
+        "raw_response": payload,
+    }
+
+
+def qwen_request_async(api_key: str, request: dict[str, Any]) -> dict[str, Any]:
+    try:
+        response = httpx.post(
+            qwen_async_submit_endpoint(),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": request["model"],
+                "prompt": request["prompt"],
+                "n": request["count"],
+                "size": request.get("size") or "1024x1024",
+                "response_format": "url_with_layered_slices",
+                **({"reference_image": request["reference_asset"]["url"]} if request.get("reference_asset") else {}),
+                **({"seed": request["seed"]} if request.get("seed") is not None else {}),
+            },
+            timeout=QWEN_INFERENCE_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"Inference provider submit HTTP {exc.response.status_code}: {qwen_response_detail(exc.response)}") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Inference provider submit network error: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError("Inference provider submit returned invalid JSON") from exc
+
+
+def qwen_request_async_poll(api_key: str, provider_job_id: str) -> dict[str, Any]:
+    try:
+        response = httpx.get(
+            qwen_async_poll_endpoint(provider_job_id),
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=QWEN_INFERENCE_TIMEOUT,
+        )
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"Inference provider poll HTTP {exc.response.status_code}: {qwen_response_detail(exc.response)}") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError(f"Inference provider poll network error: {exc}") from exc
+    except ValueError as exc:
+        raise RuntimeError("Inference provider poll returned invalid JSON") from exc
+
+
+def extract_qwen_provider_job_id(payload: dict[str, Any]) -> str | None:
+    return (
+        payload.get("task_id")
+        or payload.get("id")
+        or payload.get("request_id")
+        or payload.get("output", {}).get("task_id")
+    )
+
+
+def extract_qwen_asset_url(payload: dict[str, Any]) -> str | None:
+    return (
+        (payload.get("data") or [{}])[0].get("url")
+        if isinstance(payload.get("data"), list)
+        else None
+    ) or (payload.get("output", {}).get("results") or [{}])[0].get("url")
+
+
+def normalize_qwen_async_status(raw_status: Any) -> str:
+    status_value = str(raw_status or "submitted").lower()
+    if status_value in {"succeeded", "success", "completed", "task_succeeded"}:
+        return "succeeded"
+    if status_value in {"failed", "error", "task_failed"}:
+        return "failed"
+    if status_value in {"cancelled", "canceled", "task_canceled"}:
+        return "cancelled"
+    if status_value in {"running", "processing", "executing"}:
+        return "running"
+    return "submitted"
+
+
+def normalize_qwen_provider_error(payload: dict[str, Any]) -> dict[str, str]:
+    code = str(payload.get("code") or payload.get("error_code") or payload.get("output", {}).get("code") or "ProviderFailed")
+    message = str(payload.get("message") or payload.get("error_message") or payload.get("output", {}).get("message") or "Provider job failed")
+    return {"code": code, "message": message}
+
+
+def qwen_error_message(error: Any) -> str:
+    if isinstance(error, dict):
+        return f"{error.get('code', 'ProviderFailed')}: {error.get('message', 'Provider job failed')}"
+    return str(error or "Provider job failed")
+
+
+def qwen_response_detail(response: Any) -> Any:
+    try:
+        return response.json()
+    except Exception:
+        return response.text[:500] if getattr(response, "text", "") else None
 
 
 def qwen_request_inference(api_key: str, request: dict[str, Any]) -> dict[str, Any]:

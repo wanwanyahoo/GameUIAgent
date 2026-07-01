@@ -29,6 +29,7 @@ STORE_SECTIONS = [
     "import_logs",
     "plugin_tokens",
     "plugin_devices",
+    "engine_e2e_runs",
     "mcp_invocations",
     "restyles",
     "billing_accounts",
