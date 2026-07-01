@@ -900,6 +900,88 @@ def test_ai_worker_uses_configured_inference_provider_and_persists_run(tmp_path)
         configure_inference_provider("local-deterministic")
 
 
+def test_ai_queue_lease_timeout_requeues_and_dead_letters(tmp_path):
+    configure_persistent_store(str(tmp_path / "queue-lease.sqlite3"))
+    configure_inference_provider("failing")
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={"name": "Reliable Queue UI", "target_engine": "unity", "canvas": {"width": 1280, "height": 720}},
+    ).json()
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "lease protected job", "execution_mode": "queued"},
+    ).json()
+    queue_id = job["queue"]["id"]
+
+    first_dequeue = client.post("/api/worker/jobs/dequeue")
+    second_dequeue = client.post("/api/worker/jobs/dequeue")
+    assert first_dequeue.json()["status"] == "dequeued"
+    assert second_dequeue.json()["status"] == "idle"
+
+    store["ai_job_queue"][queue_id]["locked_at"] = "2026-06-30T00:00:00+00:00"
+    store.flush()
+    reclaimed = client.post("/api/worker/jobs/dequeue").json()
+    assert reclaimed["status"] == "dequeued"
+    assert reclaimed["queue_item"]["attempts"] == 2
+
+    failed_once = client.post(
+        f"/api/worker/jobs/{queue_id}/complete",
+        json={"status": "failed", "error": "temporary provider failure"},
+    ).json()
+    assert failed_once["queue_item"]["status"] == "queued"
+    assert failed_once["job"]["status"] == "queued"
+
+    for _ in range(3):
+        client.post("/api/worker/jobs/dequeue")
+        final_failure = client.post(
+            f"/api/worker/jobs/{queue_id}/complete",
+            json={"status": "failed", "error": "provider still unavailable"},
+        ).json()
+
+    assert final_failure["queue_item"]["status"] == "dead_letter"
+    assert final_failure["job"]["status"] == "failed"
+    assert final_failure["job"]["error"] == "provider still unavailable"
+    configure_inference_provider("local-deterministic")
+
+
+def test_worker_completion_is_idempotent_for_locked_queue_item(tmp_path):
+    configure_persistent_store(str(tmp_path / "queue-idempotent.sqlite3"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={"name": "Idempotent Queue UI", "target_engine": "unity", "canvas": {"width": 1280, "height": 720}},
+    ).json()
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "idempotent worker result", "execution_mode": "queued"},
+    ).json()
+    queue_id = job["queue"]["id"]
+    client.post("/api/worker/jobs/dequeue")
+
+    first_complete = client.post(
+        f"/api/worker/jobs/{queue_id}/complete",
+        json={"status": "succeeded", "result": {"asset_id": "ast_external_worker"}},
+    )
+    second_complete = client.post(
+        f"/api/worker/jobs/{queue_id}/complete",
+        json={"status": "succeeded", "result": {"asset_id": "ast_external_worker"}},
+    )
+
+    assert first_complete.status_code == 200
+    assert second_complete.status_code == 200
+    assert second_complete.json()["status"] == "succeeded"
+    audit_events = [
+        event for event in store["audit_events"].values()
+        if event["entity_id"] == job["id"] and event["action"] == "ai_job_succeeded"
+    ]
+    assert len(audit_events) == 1
+
+
 def test_project_ai_job_list_cancel_and_retry(tmp_path):
     configure_persistent_store(str(tmp_path / "job-management.sqlite3"))
     headers = auth_headers()
@@ -948,6 +1030,77 @@ def test_project_ai_job_list_cancel_and_retry(tmp_path):
 
     jobs = client.get(f"/api/projects/{project['id']}/ai/jobs", headers=headers).json()["jobs"]
     assert [item["id"] for item in jobs] == [retried["id"], job["id"]]
+
+
+def test_qwen_async_provider_submit_poll_and_cancel(tmp_path, monkeypatch):
+    configure_persistent_store(str(tmp_path / "qwen-async.sqlite3"))
+    configure_inference_provider("qwen-async")
+    monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={"name": "Qwen Async UI", "target_engine": "unity", "canvas": {"width": 1280, "height": 720}},
+    ).json()
+
+    submitted_payloads: list[dict[str, object]] = []
+    cancelled_provider_jobs: list[str] = []
+
+    def fake_qwen_async_submit(request):
+        submitted_payloads.append(request)
+        return {"provider_job_id": f"qwen_async_{request['job_id']}", "status": "submitted"}
+
+    def fake_qwen_async_poll(provider_job):
+        return {
+            "status": "succeeded",
+            "asset_url": "/qwen/async/result.png",
+            "provider_job_id": provider_job["provider_job_id"],
+            "layered_slices": [
+                {"id": "async_panel", "type": "panel", "name": "Async Panel", "rect": {"x": 48, "y": 32, "width": 400, "height": 220}, "confidence": 0.91}
+            ],
+        }
+
+    def fake_qwen_async_cancel(provider_job):
+        cancelled_provider_jobs.append(provider_job["provider_job_id"])
+        return {"status": "cancelled"}
+
+    monkeypatch.setattr("app.main.qwen_async_submit", fake_qwen_async_submit)
+    monkeypatch.setattr("app.main.qwen_async_poll", fake_qwen_async_poll)
+    monkeypatch.setattr("app.main.qwen_async_cancel", fake_qwen_async_cancel)
+
+    job = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "async qwen hud", "execution_mode": "queued"},
+    ).json()
+
+    submitted = client.post("/api/system/ai-worker/run-next").json()
+    assert submitted["status"] == "provider_waiting"
+    assert submitted["job"]["status"] == "processing"
+    provider_job_id = submitted["job"]["inference"]["provider_job_id"]
+    assert submitted_payloads[0]["prompt"] == "async qwen hud"
+    assert store["provider_jobs"][provider_job_id]["status"] == "submitted"
+
+    polled = client.post(f"/api/system/ai-worker/provider-jobs/{provider_job_id}/poll").json()
+    assert polled["status"] == "succeeded"
+    assert polled["job"]["status"] == "succeeded"
+    assert polled["job"]["result_asset"]["metadata"]["layered_slices"][0]["id"] == "async_panel"
+
+    cancellable = client.post(
+        f"/api/projects/{project['id']}/ai/jobs",
+        headers=headers,
+        json={"kind": "text_to_image", "prompt": "async qwen cancellable", "execution_mode": "queued"},
+    ).json()
+    submitted_cancel = client.post("/api/system/ai-worker/run-next").json()
+    cancel_response = client.post(
+        f"/api/projects/{project['id']}/ai/jobs/{submitted_cancel['job']['id']}/cancel",
+        headers=headers,
+    )
+    assert cancel_response.status_code == 200
+    assert cancel_response.json()["status"] == "cancelled"
+    assert cancelled_provider_jobs == [submitted_cancel["job"]["inference"]["provider_job_id"]]
+    assert cancellable["id"] != job["id"]
+    configure_inference_provider("local-deterministic")
 
 
 def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkeypatch):
@@ -1086,6 +1239,76 @@ def test_qwen_layered_slice_result_drives_ai_asset_segmentation(tmp_path, monkey
         }
     finally:
         configure_inference_provider("local-deterministic")
+
+
+def test_layered_slice_segmentation_creates_slice_assets_and_blocks_low_confidence_export(tmp_path):
+    configure_persistent_store(str(tmp_path / "slice-quality.sqlite3"))
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={"name": "Slice Quality UI", "target_engine": "unity", "canvas": {"width": 1280, "height": 720}},
+    ).json()
+    asset = {
+        "id": "ast_low_confidence",
+        "project_id": project["id"],
+        "type": "generated_image",
+        "name": "Low confidence generated UI",
+        "url": "/generated/low-confidence.png",
+        "source": "ai",
+        "metadata": {
+            "width": 1280,
+            "height": 720,
+            "inference_provider": "qwen",
+            "layered_slices": [
+                {
+                    "id": "uncertain_cta",
+                    "type": "button",
+                    "name": "Uncertain CTA",
+                    "rect": {"x": 240, "y": 420, "width": 220, "height": 88},
+                    "confidence": 0.52,
+                }
+            ],
+        },
+    }
+    store["assets"][asset["id"]] = asset
+
+    segmentation = client.post(
+        f"/api/projects/{project['id']}/segmentations",
+        headers=headers,
+        json={"asset_id": asset["id"]},
+    ).json()
+
+    node = segmentation["ir"]["nodes"][1]
+    assert node["asset_ref"]["asset_id"].startswith("ast_slice")
+    assert node["requires_review"] is True
+    assert store["assets"][node["asset_ref"]["asset_id"]]["type"] == "slice_image"
+
+    export_response = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": segmentation["ir"]["id"], "target_engine": "unity"},
+    )
+    assert export_response.status_code == 422
+    assert export_response.json()["detail"]["errors"][0]["field"] == "requires_review"
+
+    reviewed = client.post(
+        f"/api/projects/{project['id']}/irs/{segmentation['ir']['id']}/patches",
+        headers=headers,
+        json={
+            "base_version": segmentation["ir"]["version"],
+            "summary": "Approve low confidence slice",
+            "operations": [
+                {"op": "update_node", "node_id": "uncertain_cta", "fields": {"requires_review": False}}
+            ],
+        },
+    ).json()
+    export_after_review = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": reviewed["ir"]["id"], "target_engine": "unity"},
+    )
+    assert export_after_review.status_code == 201
 
 
 def test_qwen_layered_slice_parser_ignores_malformed_provider_shapes():

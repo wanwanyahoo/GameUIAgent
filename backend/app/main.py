@@ -229,6 +229,9 @@ MAX_FIGMA_IMAGE_FILL_BYTES = 25 * 1024 * 1024
 MAX_GENERATED_IMAGE_BYTES = 25 * 1024 * 1024
 QWEN_INFERENCE_TIMEOUT = int(getenv("QWEN_INFERENCE_TIMEOUT", "120"))
 QWEN_DOWNLOAD_TIMEOUT = int(getenv("QWEN_DOWNLOAD_TIMEOUT", "60"))
+AI_QUEUE_LEASE_SECONDS = int(getenv("GAMEUIAGENT_AI_QUEUE_LEASE_SECONDS", "300"))
+AI_QUEUE_MAX_ATTEMPTS = int(getenv("GAMEUIAGENT_AI_QUEUE_MAX_ATTEMPTS", "4"))
+LOW_CONFIDENCE_SLICE_THRESHOLD = 0.75
 
 
 def configure_persistent_store(db_path: str) -> None:
@@ -930,6 +933,8 @@ def create_ai_job(
             "project_id": project["id"],
             "status": "queued",
             "attempts": 0,
+            "max_attempts": AI_QUEUE_MAX_ATTEMPTS,
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "worker": "gameuiagent-local-worker",
             "model": payload.model or "game-ui-default",
         }
@@ -997,10 +1002,17 @@ def cancel_project_ai_job(
     queue_item = job.get("queue")
     if queue_item:
         stored_queue_item = store["ai_job_queue"].get(queue_item["id"])
-        if stored_queue_item and stored_queue_item["status"] in {"queued", "locked"}:
+        if stored_queue_item and stored_queue_item["status"] in {"queued", "locked", "provider_waiting"}:
             stored_queue_item["status"] = "cancelled"
             stored_queue_item["cancelled_at"] = datetime.now(timezone.utc).isoformat()
             job["queue"] = stored_queue_item
+    provider_job_id = job.get("inference", {}).get("provider_job_id")
+    if provider_job_id and provider_job_id in store["provider_jobs"]:
+        provider_job = store["provider_jobs"][provider_job_id]
+        if provider_job["provider"] == "qwen-async":
+            qwen_async_cancel(provider_job)
+        provider_job["status"] = "cancelled"
+        provider_job["cancelled_at"] = datetime.now(timezone.utc).isoformat()
     append_audit_event(
         project["id"],
         "ai_job_cancelled",
@@ -1052,10 +1064,7 @@ def retry_project_ai_job(
 
 @app.post("/api/worker/jobs/dequeue")
 def dequeue_ai_job(_worker_authorized: bool = Depends(require_worker_token)) -> dict[str, Any]:
-    queue_item = next(
-        (item for item in store["ai_job_queue"].values() if item["status"] == "queued"),
-        None,
-    )
+    queue_item = next_dequeueable_queue_item()
     if not queue_item:
         return {"status": "idle", "queue_item": None}
     job = store["jobs"].get(queue_item["job_id"])
@@ -1066,8 +1075,11 @@ def dequeue_ai_job(_worker_authorized: bool = Depends(require_worker_token)) -> 
         store.flush()
         return {"status": "failed", "queue_item": queue_item, "job": None}
     queue_item["status"] = "locked"
+    queue_item["attempts"] = queue_item.get("attempts", 0) + 1
     queue_item["worker"] = "worker-" + queue_item.get("id", "")[-8:]
-    queue_item["locked_at"] = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    queue_item["locked_at"] = now.isoformat()
+    queue_item["lease_expires_at"] = (now + timedelta(seconds=AI_QUEUE_LEASE_SECONDS)).isoformat()
     job["status"] = "running"
     job["progress"] = 25
     store.flush()
@@ -1089,6 +1101,9 @@ def complete_worker_job(
     queue_item = store["ai_job_queue"].get(queue_id)
     if not queue_item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Queue item not found")
+    if queue_item["status"] in {"succeeded", "failed", "dead_letter", "cancelled"}:
+        job = store["jobs"].get(queue_item["job_id"])
+        return {"status": job["status"] if job else queue_item["status"], "queue_item": queue_item, "job": job}
     if queue_item["status"] != "locked":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Queue item is not locked")
     job = store["jobs"].get(queue_item["job_id"])
@@ -1109,11 +1124,17 @@ def complete_worker_job(
             if payload.result.get("asset_id"):
                 job["output_asset_ids"] = [payload.result["asset_id"]]
     else:
-        queue_item["status"] = "failed"
         queue_item["error"] = payload.error or "Worker failed"
-        job["status"] = "failed"
-        job["progress"] = 0
-        job["error"] = payload.error or "Worker failed"
+        if queue_item.get("attempts", 0) < queue_item.get("max_attempts", AI_QUEUE_MAX_ATTEMPTS):
+            queue_item["status"] = "queued"
+            queue_item["next_run_at"] = datetime.now(timezone.utc).isoformat()
+            job["status"] = "queued"
+            job["progress"] = 0
+        else:
+            queue_item["status"] = "dead_letter"
+            job["status"] = "failed"
+            job["progress"] = 0
+            job["error"] = payload.error or "Worker failed"
 
     job["queue"] = queue_item
     if job["status"] in {"succeeded", "failed"}:
@@ -1130,12 +1151,34 @@ def complete_worker_job(
     return {"status": job["status"], "queue_item": queue_item, "job": job}
 
 
+def next_dequeueable_queue_item() -> dict[str, Any] | None:
+    now = datetime.now(timezone.utc)
+    for item in store["ai_job_queue"].values():
+        if item["status"] == "queued":
+            return item
+        if item["status"] == "locked" and queue_lease_expired(item, now):
+            item["status"] = "queued"
+            item["lease_reclaimed_at"] = now.isoformat()
+            return item
+    return None
+
+
+def queue_lease_expired(queue_item: dict[str, Any], now: datetime) -> bool:
+    locked_at = queue_item.get("locked_at")
+    if not locked_at:
+        return False
+    try:
+        locked_time = datetime.fromisoformat(locked_at)
+    except ValueError:
+        return True
+    if locked_time.tzinfo is None:
+        locked_time = locked_time.replace(tzinfo=timezone.utc)
+    return now - locked_time > timedelta(seconds=AI_QUEUE_LEASE_SECONDS)
+
+
 @app.post("/api/system/ai-worker/run-next")
 def run_next_ai_worker_job(_worker_authorized: bool = Depends(require_worker_token)) -> dict[str, Any]:
-    queue_item = next(
-        (item for item in store["ai_job_queue"].values() if item["status"] == "queued"),
-        None,
-    )
+    queue_item = next_dequeueable_queue_item()
     if not queue_item:
         return {"status": "idle", "job": None}
     job = store["jobs"].get(queue_item["job_id"])
@@ -1150,8 +1193,20 @@ def run_next_ai_worker_job(_worker_authorized: bool = Depends(require_worker_tok
     job["status"] = "running"
     job["progress"] = 50
     try:
-        complete_ai_job(project, job, run_inference_provider(project, job))
-        queue_item["status"] = "succeeded"
+        inference_result = run_inference_provider(project, job)
+        if inference_result.get("status") == "submitted":
+            provider_job = create_provider_job(project, job, queue_item, inference_result)
+            queue_item["status"] = "provider_waiting"
+            job["status"] = "processing"
+            job["progress"] = 60
+            job["inference"] = {
+                "run_id": inference_result["run_id"],
+                "provider": inference_result["provider"],
+                "provider_job_id": provider_job["provider_job_id"],
+            }
+        else:
+            complete_ai_job(project, job, inference_result)
+            queue_item["status"] = "succeeded"
     except RuntimeError as exc:
         queue_item["status"] = "failed"
         queue_item["error"] = str(exc)
@@ -1170,7 +1225,45 @@ def run_next_ai_worker_job(_worker_authorized: bool = Depends(require_worker_tok
             metadata={"queue_id": queue_item["id"], "worker": queue_item["worker"]},
         )
     store.flush()
+    if queue_item["status"] == "provider_waiting":
+        return {"status": "provider_waiting", "job": job, "queue": queue_item}
     return {"status": "processed" if job["status"] == "succeeded" else "failed", "job": job, "queue": queue_item}
+
+
+@app.post("/api/system/ai-worker/provider-jobs/{provider_job_id}/poll")
+def poll_provider_job(provider_job_id: str, _worker_authorized: bool = Depends(require_worker_token)) -> dict[str, Any]:
+    provider_job = store["provider_jobs"].get(provider_job_id)
+    if not provider_job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Provider job not found")
+    job = store["jobs"].get(provider_job["job_id"])
+    project = store["projects"].get(provider_job["project_id"])
+    queue_item = store["ai_job_queue"].get(provider_job["queue_id"])
+    if not job or not project or not queue_item:
+        provider_job["status"] = "failed"
+        provider_job["error"] = "Provider job lost its queue, job or project"
+        store.flush()
+        return {"status": "failed", "provider_job": provider_job, "job": job}
+    result = qwen_async_poll(provider_job)
+    provider_job["status"] = result["status"]
+    provider_job["last_polled_at"] = datetime.now(timezone.utc).isoformat()
+    if result["status"] == "succeeded":
+        inference_result = {
+            "run_id": provider_job["run_id"],
+            "provider": provider_job["provider"],
+            "asset_url": result["asset_url"],
+            "provider_job_id": provider_job_id,
+            "layered_slices": result.get("layered_slices", []),
+        }
+        complete_ai_job(project, job, inference_result)
+        queue_item["status"] = "succeeded"
+        job["queue"] = queue_item
+        append_audit_event(project["id"], "ai_job_succeeded", None, "ai_job", job["id"], status_value="succeeded")
+    elif result["status"] == "failed":
+        queue_item["status"] = "dead_letter"
+        job["status"] = "failed"
+        job["error"] = result.get("error", "Provider job failed")
+    store.flush()
+    return {"status": provider_job["status"], "provider_job": provider_job, "job": job}
 
 
 @app.post("/api/projects/{project_id}/segmentations", status_code=status.HTTP_201_CREATED)
@@ -2611,6 +2704,8 @@ def validate_ir_for_export(project: dict[str, Any], ir: dict[str, Any]) -> list[
             errors.append({"node_id": node_id, "field": "rect", "message": "Node width and height must be positive"})
         if node.get("type") != "canvas" and (rect.get("x", 0) >= canvas["width"] or rect.get("y", 0) >= canvas["height"]):
             errors.append({"node_id": node_id, "field": "rect", "message": "Node is outside the canvas"})
+        if node.get("requires_review"):
+            errors.append({"node_id": node_id, "field": "requires_review", "message": "Low confidence slice requires review before export"})
     return errors
 
 
@@ -2703,6 +2798,11 @@ def apply_ir_node_field(node: dict[str, Any], field: str, value: Any) -> None:
         if not isinstance(value, (int, float)) or value < 0 or value > 1:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node opacity")
         node["opacity"] = value
+        return
+    if field == "requires_review":
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node review status")
+        node["requires_review"] = value
         return
     if field in {"text", "layout", "component", "nine_slice"}:
         if not isinstance(value, dict):
@@ -3065,7 +3165,7 @@ def validate_ai_execution_mode(execution_mode: str) -> None:
 
 
 def inference_provider_configured() -> bool:
-    if inference_provider_name == "qwen":
+    if inference_provider_name in {"qwen", "qwen-async"}:
         return bool(getenv("QWEN_API_KEY"))
     return inference_provider_name == "local-deterministic"
 
@@ -3112,6 +3212,8 @@ def run_inference_provider(project: dict[str, Any], job: dict[str, Any]) -> dict
             raise RuntimeError("Inference provider failed")
         if inference_provider_name == "qwen":
             response = call_qwen_inference(request)
+        elif inference_provider_name == "qwen-async":
+            response = qwen_async_submit(request)
         elif inference_provider_name == "local-deterministic":
             response = {
                 "asset_url": f"/inference/local-deterministic/{job['id']}.png",
@@ -3128,6 +3230,27 @@ def run_inference_provider(project: dict[str, Any], job: dict[str, Any]) -> dict
     run["response"] = response
     store.flush()
     return {"run_id": run["id"], "provider": run["provider"], **response}
+
+
+def create_provider_job(
+    project: dict[str, Any],
+    job: dict[str, Any],
+    queue_item: dict[str, Any],
+    inference_result: dict[str, Any],
+) -> dict[str, Any]:
+    provider_job = {
+        "id": make_id("pjob"),
+        "provider_job_id": inference_result["provider_job_id"],
+        "provider": inference_result["provider"],
+        "run_id": inference_result["run_id"],
+        "job_id": job["id"],
+        "project_id": project["id"],
+        "queue_id": queue_item["id"],
+        "status": inference_result["status"],
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+    }
+    store["provider_jobs"][provider_job["provider_job_id"]] = provider_job
+    return provider_job
 
 
 def call_qwen_inference(request: dict[str, Any]) -> dict[str, Any]:
@@ -3153,6 +3276,25 @@ def call_qwen_inference(request: dict[str, Any]) -> dict[str, Any]:
         "provider_job_id": payload.get("id") or payload.get("request_id"),
         "layered_slices": extract_qwen_layered_slices(payload),
     }
+
+
+def qwen_async_submit(request: dict[str, Any]) -> dict[str, Any]:
+    api_key = getenv("QWEN_API_KEY")
+    if not api_key:
+        raise RuntimeError("Inference provider is not configured")
+    payload = qwen_request_inference(api_key, request)
+    return {
+        "provider_job_id": payload.get("id") or payload.get("request_id") or make_id("qwen"),
+        "status": "submitted",
+    }
+
+
+def qwen_async_poll(provider_job: dict[str, Any]) -> dict[str, Any]:
+    raise RuntimeError(f"Qwen async poll adapter is not configured for {provider_job['provider_job_id']}")
+
+
+def qwen_async_cancel(provider_job: dict[str, Any]) -> dict[str, Any]:
+    return {"status": "cancelled", "provider_job_id": provider_job["provider_job_id"]}
 
 
 def qwen_request_inference(api_key: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -3545,6 +3687,7 @@ def build_layered_asset_slices(asset: dict[str, Any]) -> list[dict[str, Any]]:
 
 def build_ir_from_layered_asset_segmentation(project: dict[str, Any], asset: dict[str, Any]) -> dict[str, Any]:
     slices = build_layered_asset_slices(asset)
+    slice_assets = {item["id"]: create_slice_asset(project, asset, item) for item in slices}
     nodes = [
         {
             "id": "root",
@@ -3561,7 +3704,14 @@ def build_ir_from_layered_asset_segmentation(project: dict[str, Any], asset: dic
             "rect": item["rect"],
             "source_asset_id": asset["id"],
             "confidence": item["confidence"],
+            "requires_review": item["confidence"] < LOW_CONFIDENCE_SLICE_THRESHOLD,
             "segmentation_source": item["segmentation_source"],
+            "asset_ref": {
+                "asset_id": slice_assets[item["id"]]["id"],
+                "source_asset_id": asset["id"],
+                "crop_rect": item["rect"],
+            },
+            "component": infer_slice_component(item),
         }
         for item in slices
     )
@@ -3580,6 +3730,36 @@ def build_ir_from_layered_asset_segmentation(project: dict[str, Any], asset: dic
             "inference_run_id": asset.get("metadata", {}).get("inference_run_id"),
         },
         "nodes": nodes,
+    }
+
+
+def create_slice_asset(project: dict[str, Any], source_asset: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    rect = item["rect"]
+    asset = {
+        "id": make_id("ast_slice"),
+        "project_id": project["id"],
+        "type": "slice_image",
+        "name": f"{source_asset['name']} / {item['name']}",
+        "url": f"{source_asset['url']}#xywh={rect['x']},{rect['y']},{rect['width']},{rect['height']}",
+        "source": "segmentation_slice",
+        "metadata": {
+            "source_asset_id": source_asset["id"],
+            "slice_id": item["id"],
+            "rect": rect,
+            "confidence": item["confidence"],
+            "segmentation_source": item["segmentation_source"],
+        },
+    }
+    store["assets"][asset["id"]] = asset
+    return asset
+
+
+def infer_slice_component(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "role": item["type"],
+        "ocr_text": item.get("text"),
+        "layout_hint": "absolute",
+        "nine_slice_candidate": item["type"] in {"button", "panel"},
     }
 
 
