@@ -22,6 +22,7 @@ export type ProjectsListResponse = {
 export type StudioState = {
   project_id: string;
   active_selection: {
+    active_ir_id?: string;
     selected_layer_id: string;
     selected_asset_id: string;
     active_task_id: string;

@@ -2432,6 +2432,7 @@ def test_studio_state_applies_corrections_and_previews_export_wizard():
         "apply-correction",
         "export-package",
     ]
+    assert studio["active_selection"]["active_ir_id"]
     assert studio["active_selection"]["selected_layer_id"] == "button_primary"
     assert [task["kind"] for task in studio["timeline"]] == [
         "text_to_image",

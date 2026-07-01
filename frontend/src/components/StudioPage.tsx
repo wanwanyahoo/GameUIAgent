@@ -16,12 +16,25 @@ import {
 } from "../lib/plugin-api";
 import {
   cancelStudioAiJob,
+  fetchStudioIr,
   listStudioAssets,
   listStudioAiJobs,
+  patchStudioIr,
   retryStudioAiJob,
+  validateStudioIr,
   type StudioAsset,
   type StudioAiJob,
 } from "../lib/studio-api";
+import {
+  buildStudioEditorState,
+  createStudioEditorPatch,
+  redoStudioEditor,
+  selectStudioEditorNode,
+  undoStudioEditor,
+  updateStudioEditorNode,
+  type StudioEditorLayerNode,
+  type StudioEditorState,
+} from "../lib/studio-editor";
 
 type StudioPageProps = {
   projectId: string;
@@ -58,6 +71,8 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [professionalImportFile, setProfessionalImportFile] = useState<File | null>(null);
   const [figmaImportUrl, setFigmaImportUrl] = useState("");
   const [figmaImportFrameId, setFigmaImportFrameId] = useState("");
+  const [editor, setEditor] = useState<StudioEditorState | null>(null);
+  const [savingEditor, setSavingEditor] = useState(false);
 
   useEffect(() => {
     if (!projectId) {
@@ -104,6 +119,37 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setIsPolling(false);
     };
   }, [token, projectId]);
+
+  useEffect(() => {
+    const activeIrId = studio?.active_selection.active_ir_id;
+    const selectedLayerId = studio?.active_selection.selected_layer_id;
+    const currentProjectId = project?.id;
+    const authToken = token;
+    if (!authToken || !currentProjectId || !activeIrId) return;
+    const projectIdForEditor: string = currentProjectId;
+    const irIdForEditor: string = activeIrId;
+    const tokenForEditor: string = authToken;
+
+    let cancelled = false;
+    async function loadEditor() {
+      try {
+        const ir = await fetchStudioIr({
+          projectId: projectIdForEditor,
+          irId: irIdForEditor,
+          token: tokenForEditor,
+        });
+        if (!cancelled) {
+          setEditor(buildStudioEditorState(ir, selectedLayerId));
+        }
+      } catch (err: any) {
+        if (!cancelled) setError(err.message || "Failed to load editable Asset IR");
+      }
+    }
+    loadEditor();
+    return () => {
+      cancelled = true;
+    };
+  }, [token, project?.id, studio?.active_selection.active_ir_id, studio?.active_selection.selected_layer_id]);
 
   if (!token || !user) {
     return null;
@@ -270,6 +316,59 @@ export function StudioPage({ projectId }: StudioPageProps) {
     }
   };
 
+  const handleSelectEditorNode = (nodeId: string) => {
+    if (!editor) return;
+    setEditor(selectStudioEditorNode(editor, nodeId));
+  };
+
+  const handleEditorFieldChange = (field: string, value: string | number | boolean) => {
+    if (!editor) return;
+    if (["x", "y", "width", "height"].includes(field)) {
+      setEditor(updateStudioEditorNode(editor, {
+        rect: {
+          ...editor.inspector.rect,
+          [field]: Number(value),
+        },
+      }));
+      return;
+    }
+    setEditor(updateStudioEditorNode(editor, { [field]: value }));
+  };
+
+  const handleUndoEditor = () => {
+    if (editor) setEditor(undoStudioEditor(editor));
+  };
+
+  const handleRedoEditor = () => {
+    if (editor) setEditor(redoStudioEditor(editor));
+  };
+
+  const handleSaveEditor = async () => {
+    if (!token || !project || !editor || savingEditor) return;
+    const patch = createStudioEditorPatch(editor, `Studio edit ${editor.selectedNode?.name ?? editor.selectedNodeId}`);
+    if (patch.operations.length === 0) {
+      setActionMessage("No editor changes to save");
+      return;
+    }
+    try {
+      setSavingEditor(true);
+      setError(null);
+      await validateStudioIr({ projectId: project.id, irId: editor.draftIr.id, token });
+      const result = await patchStudioIr({
+        projectId: project.id,
+        irId: editor.draftIr.id,
+        token,
+        ...patch,
+      });
+      setEditor(buildStudioEditorState(result.ir, editor.selectedNodeId));
+      setActionMessage(`Saved Asset IR ${result.version.version}`);
+    } catch (err: any) {
+      setError(err.message || "Failed to save Asset IR edits");
+    } finally {
+      setSavingEditor(false);
+    }
+  };
+
   const handlePluginImportLog = async (item: PluginProjectExport) => {
     if (!token || !project || activePluginImportId) return;
     try {
@@ -337,14 +436,49 @@ export function StudioPage({ projectId }: StudioPageProps) {
               </div>
             ))}
           </div>
+          {editor && (
+            <div className="studio-editor-panel">
+              <h3>Layer Tree</h3>
+              <div className="studio-layer-tree">
+                {editor.layerTree.map((node) => (
+                  <LayerTreeItem
+                    key={node.id}
+                    node={node}
+                    selectedNodeId={editor.selectedNodeId}
+                    onSelect={handleSelectEditorNode}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </aside>
 
         <main className="studio-canvas-area">
-          <div className="studio-canvas-placeholder">
+          <div className={editor ? "studio-canvas-workbench" : "studio-canvas-placeholder"}>
             <h2>AI Canvas</h2>
             <p>
               {project.name} — {project.canvas.width}×{project.canvas.height}
             </p>
+            {editor && (
+              <div className="studio-ir-canvas">
+                {editor.draftIr.nodes.filter((node) => node.type !== "canvas").map((node) => (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={`studio-ir-node ${node.type} ${editor.selectedNodeId === node.id ? "selected" : ""}`}
+                    style={{
+                      left: `${(node.rect.x / project.canvas.width) * 100}%`,
+                      top: `${(node.rect.y / project.canvas.height) * 100}%`,
+                      width: `${(node.rect.width / project.canvas.width) * 100}%`,
+                      height: `${(node.rect.height / project.canvas.height) * 100}%`,
+                    }}
+                    onClick={() => handleSelectEditorNode(node.id)}
+                  >
+                    {node.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="canvas-actions">
               {studio.action_dock.map((action) => (
                 <button
@@ -394,6 +528,50 @@ export function StudioPage({ projectId }: StudioPageProps) {
         </main>
 
         <aside className="studio-sidebar right-sidebar">
+          {editor && (
+            <div className="sidebar-section">
+              <h3>Inspector</h3>
+              <div className="studio-inspector">
+                <label>
+                  <span>Name</span>
+                  <input
+                    type="text"
+                    value={editor.inspector.name}
+                    onChange={(event) => handleEditorFieldChange("name", event.currentTarget.value)}
+                  />
+                </label>
+                <div className="studio-inspector-grid">
+                  {(["x", "y", "width", "height"] as const).map((field) => (
+                    <label key={field}>
+                      <span>{field}</span>
+                      <input
+                        type="number"
+                        value={editor.inspector.rect[field]}
+                        onChange={(event) => handleEditorFieldChange(field, Number(event.currentTarget.value))}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <label className="studio-inspector-toggle">
+                  <input
+                    type="checkbox"
+                    checked={editor.inspector.visible}
+                    onChange={(event) => handleEditorFieldChange("visible", event.currentTarget.checked)}
+                  />
+                  <span>Visible</span>
+                </label>
+                <div className="studio-editor-actions">
+                  <button type="button" onClick={handleUndoEditor} disabled={editor.undoStack.length === 0}>Undo</button>
+                  <button type="button" onClick={handleRedoEditor} disabled={editor.redoStack.length === 0}>Redo</button>
+                  <button type="button" onClick={handleSaveEditor} disabled={savingEditor}>
+                    {savingEditor ? "Saving..." : "Save IR"}
+                  </button>
+                </div>
+                <p className="studio-asset-id">Version {editor.baseVersion} | {editor.selectedNodeId}</p>
+              </div>
+            </div>
+          )}
+
           <div className="sidebar-section">
             <h3>Professional Import</h3>
             <div className="studio-professional-import">
@@ -625,4 +803,39 @@ function defaultEngineVersion(engine: string): string {
   if (engine === "godot") return "4.x";
   if (engine === "cocos2") return "2.4.x+";
   return "3.8.6+";
+}
+
+function LayerTreeItem({
+  node,
+  selectedNodeId,
+  onSelect,
+}: {
+  node: StudioEditorLayerNode;
+  selectedNodeId: string;
+  onSelect: (nodeId: string) => void;
+}) {
+  return (
+    <div className="studio-layer-tree-item">
+      <button
+        type="button"
+        className={selectedNodeId === node.id ? "selected" : ""}
+        onClick={() => onSelect(node.id)}
+      >
+        <span>{node.name}</span>
+        <small>{node.type}</small>
+      </button>
+      {node.children.length > 0 && (
+        <div className="studio-layer-tree-children">
+          {node.children.map((child) => (
+            <LayerTreeItem
+              key={child.id}
+              node={child}
+              selectedNodeId={selectedNodeId}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

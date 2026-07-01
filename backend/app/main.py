@@ -2626,6 +2626,9 @@ def ensure_studio_seed_asset(project: dict[str, Any]) -> dict[str, Any]:
 def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
     studio = store["studio_states"].get(project["id"])
     if studio:
+        ir = latest_project_ir(project)
+        if ir:
+            studio.setdefault("active_selection", {})["active_ir_id"] = ir["id"]
         selected_asset_id = studio.get("active_selection", {}).get("selected_asset_id")
         if selected_asset_id not in store["assets"]:
             studio["active_selection"]["selected_asset_id"] = ensure_studio_seed_asset(project)["id"]
@@ -2637,6 +2640,7 @@ def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
     studio = {
         "project_id": project["id"],
         "active_selection": {
+            "active_ir_id": ir["id"],
             "selected_layer_id": button_node["id"],
             "selected_asset_id": seed_asset["id"],
             "active_task_id": "timeline_slice",
@@ -2684,7 +2688,10 @@ def ensure_studio_state(project: dict[str, Any]) -> dict[str, Any]:
 
 def refresh_studio_runtime_state(project: dict[str, Any], studio: dict[str, Any]) -> dict[str, Any]:
     studio["timeline"] = build_studio_timeline(project, studio["export_wizard"]["target_engine"])
-    apply_studio_layered_slice_summary(studio, latest_project_ir(project))
+    ir = latest_project_ir(project)
+    if ir:
+        studio.setdefault("active_selection", {})["active_ir_id"] = ir["id"]
+    apply_studio_layered_slice_summary(studio, ir)
     return studio
 
 

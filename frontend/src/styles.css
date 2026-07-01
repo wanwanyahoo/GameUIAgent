@@ -4582,6 +4582,140 @@ a {
   font-size: 0.95rem;
 }
 
+.studio-canvas-workbench {
+  width: min(100%, 960px);
+  text-align: center;
+}
+
+.studio-ir-canvas {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin: 1rem 0 1.5rem;
+  background:
+    linear-gradient(rgba(124, 248, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 248, 255, 0.05) 1px, transparent 1px),
+    rgba(4, 8, 16, 0.72);
+  background-size: 32px 32px;
+  border: 1px solid rgba(124, 248, 255, 0.2);
+  border-radius: 1rem;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.studio-ir-node {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  padding: 0.25rem;
+  color: rgba(232, 247, 255, 0.86);
+  background: rgba(124, 248, 255, 0.08);
+  border: 1px solid rgba(124, 248, 255, 0.35);
+  border-radius: 0.35rem;
+  font: 600 0.62rem "IBM Plex Mono", monospace;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.studio-ir-node.button {
+  background: rgba(215, 255, 102, 0.12);
+  border-color: rgba(215, 255, 102, 0.48);
+}
+
+.studio-ir-node.selected {
+  color: #071018;
+  background: #7cf8ff;
+  border-color: #d7ff66;
+  box-shadow: 0 0 0 2px rgba(215, 255, 102, 0.45), 0 0 30px rgba(124, 248, 255, 0.32);
+}
+
+.studio-editor-panel {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.studio-layer-tree {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.studio-layer-tree-item button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  color: rgba(232, 247, 255, 0.8);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(124, 248, 255, 0.12);
+  border-radius: 0.45rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.studio-layer-tree-item button.selected {
+  color: #7cf8ff;
+  border-color: rgba(124, 248, 255, 0.55);
+  background: rgba(124, 248, 255, 0.12);
+}
+
+.studio-layer-tree-item small {
+  color: rgba(232, 247, 255, 0.45);
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.studio-layer-tree-children {
+  margin: 0.35rem 0 0.35rem 0.75rem;
+  padding-left: 0.55rem;
+  border-left: 1px solid rgba(124, 248, 255, 0.16);
+}
+
+.studio-inspector {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.studio-inspector label {
+  display: grid;
+  gap: 0.35rem;
+  color: rgba(232, 247, 255, 0.62);
+  font-size: 0.72rem;
+}
+
+.studio-inspector input {
+  width: 100%;
+  padding: 0.5rem 0.55rem;
+  color: rgba(232, 247, 255, 0.88);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(124, 248, 255, 0.18);
+  border-radius: 0.45rem;
+}
+
+.studio-inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.studio-inspector-toggle {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 0.5rem !important;
+}
+
+.studio-inspector-toggle input {
+  width: auto;
+}
+
+.studio-editor-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
 .canvas-actions {
   display: flex;
   flex-wrap: wrap;
