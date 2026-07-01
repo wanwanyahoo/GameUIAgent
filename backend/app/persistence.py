@@ -16,6 +16,8 @@ STORE_SECTIONS = [
     "ai_job_queue",
     "inference_runs",
     "irs",
+    "ir_versions",
+    "ir_patches",
     "exports",
     "snapshots",
     "imports",

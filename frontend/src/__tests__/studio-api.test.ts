@@ -10,12 +10,17 @@ import {
   copyStudioAsset,
   cancelStudioAiJob,
   deleteStudioAsset,
+  fetchStudioIr,
   fetchStudioState,
   getStudioAiJob,
+  listStudioIrVersions,
   listStudioAssetVersions,
   listStudioAssets,
   listStudioAiJobs,
+  patchStudioIr,
   previewStudioExportWizard,
+  restoreStudioIrVersion,
+  validateStudioIr,
   retryStudioAiJob,
   uploadStudioAsset,
   updateStudioAsset
@@ -111,6 +116,163 @@ describe("studio API client", () => {
     assert.equal(calls[1]?.url, "/api/projects/prj_1/studio/export-wizard");
     assert.equal(calls[1]?.init?.method, "POST");
     assert.equal(calls[1]?.init?.body, JSON.stringify({ target_engine: "cocos3" }));
+  });
+
+  it("reads, patches, validates and restores editable Asset IR versions", async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url.endsWith("/versions") && init?.method !== "POST") {
+        return jsonResponse({
+          ir_id: "ir_1",
+          current_version: "0.1.1",
+          versions: [
+            {
+              id: "irv_1",
+              project_id: "prj_1",
+              ir_id: "ir_1",
+              version: "0.1.0",
+              summary: "Initial IR snapshot",
+              patch_id: null,
+              author_id: "usr_1",
+              created_at: "2026-07-01T00:00:00Z"
+            }
+          ]
+        });
+      }
+      if (url.endsWith("/patches")) {
+        return jsonResponse({
+          ir: {
+            id: "ir_1",
+            project_id: "prj_1",
+            version: "0.1.1",
+            nodes: [
+              {
+                id: "button_primary",
+                type: "button",
+                name: "Safe CTA",
+                rect: { x: 840, y: 760, width: 360, height: 112 },
+                visible: false
+              }
+            ]
+          },
+          patch: { id: "irp_1", summary: "Move CTA" },
+          version: {
+            id: "irv_2",
+            project_id: "prj_1",
+            ir_id: "ir_1",
+            version: "0.1.1",
+            summary: "Move CTA",
+            patch_id: "irp_1",
+            author_id: "usr_1",
+            created_at: "2026-07-01T00:01:00Z"
+          }
+        });
+      }
+      if (url.endsWith("/validate")) {
+        return jsonResponse({ ir_id: "ir_1", status: "valid", errors: [] });
+      }
+      if (url.endsWith("/restore")) {
+        return jsonResponse({
+          ir: {
+            id: "ir_1",
+            project_id: "prj_1",
+            version: "0.1.2",
+            nodes: [
+              {
+                id: "button_primary",
+                type: "button",
+                name: "Primary CTA",
+                rect: { x: 760, y: 820, width: 400, height: 120 }
+              }
+            ]
+          },
+          version: {
+            id: "irv_3",
+            project_id: "prj_1",
+            ir_id: "ir_1",
+            version: "0.1.2",
+            summary: "Restore 0.1.0",
+            patch_id: null,
+            author_id: "usr_1",
+            created_at: "2026-07-01T00:02:00Z"
+          }
+        });
+      }
+      return jsonResponse({
+        ir: {
+          id: "ir_1",
+          project_id: "prj_1",
+          version: "0.1.0",
+          canvas: { width: 1920, height: 1080 },
+          nodes: [
+            {
+              id: "button_primary",
+              type: "button",
+              name: "Primary CTA",
+              rect: { x: 760, y: 820, width: 400, height: 120 }
+            }
+          ]
+        }
+      });
+    };
+
+    const ir = await fetchStudioIr({ projectId: "prj_1", irId: "ir_1", token: "tok_1", fetcher });
+    const versions = await listStudioIrVersions({ projectId: "prj_1", irId: "ir_1", token: "tok_1", fetcher });
+    const patched = await patchStudioIr({
+      projectId: "prj_1",
+      irId: "ir_1",
+      token: "tok_1",
+      baseVersion: "0.1.0",
+      summary: "Move CTA",
+      operations: [
+        {
+          op: "update_node",
+          nodeId: "button_primary",
+          fields: {
+            name: "Safe CTA",
+            rect: { x: 840, y: 760, width: 360, height: 112 },
+            visible: false
+          }
+        }
+      ],
+      fetcher
+    });
+    const validation = await validateStudioIr({ projectId: "prj_1", irId: "ir_1", token: "tok_1", fetcher });
+    const restored = await restoreStudioIrVersion({
+      projectId: "prj_1",
+      irId: "ir_1",
+      versionId: "irv_1",
+      token: "tok_1",
+      fetcher
+    });
+
+    assert.equal(calls[0]?.url, "/api/projects/prj_1/irs/ir_1");
+    assert.equal(calls[1]?.url, "/api/projects/prj_1/irs/ir_1/versions");
+    assert.equal(calls[2]?.url, "/api/projects/prj_1/irs/ir_1/patches");
+    assert.equal(calls[2]?.init?.body, JSON.stringify({
+      base_version: "0.1.0",
+      summary: "Move CTA",
+      operations: [
+        {
+          op: "update_node",
+          node_id: "button_primary",
+          fields: {
+            name: "Safe CTA",
+            rect: { x: 840, y: 760, width: 360, height: 112 },
+            visible: false
+          }
+        }
+      ]
+    }));
+    assert.equal(calls[3]?.url, "/api/projects/prj_1/irs/ir_1/validate");
+    assert.equal(calls[4]?.url, "/api/projects/prj_1/irs/ir_1/versions/irv_1/restore");
+    assert.equal(ir.nodes[0]?.name, "Primary CTA");
+    assert.equal(versions[0]?.version, "0.1.0");
+    assert.equal(patched.ir.nodes[0]?.name, "Safe CTA");
+    assert.equal(patched.version.patchId, "irp_1");
+    assert.equal(validation.status, "valid");
+    assert.equal(restored.ir.version, "0.1.2");
   });
 
   it("creates uploaded assets, AI jobs and segmentation requests", async () => {

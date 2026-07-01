@@ -118,6 +118,65 @@ export type ProfessionalImportSource = {
   };
 };
 
+export type StudioIrNode = {
+  id: string;
+  type: string;
+  name: string;
+  rect: { x: number; y: number; width: number; height: number };
+  visible?: boolean;
+  opacity?: number;
+  text?: Record<string, unknown>;
+  layout?: Record<string, unknown>;
+  component?: Record<string, unknown>;
+  nineSlice?: Record<string, unknown>;
+  parentId?: string | null;
+  [key: string]: unknown;
+};
+
+export type StudioIr = {
+  id: string;
+  projectId: string;
+  version: string;
+  canvas?: { width: number; height: number };
+  nodes: StudioIrNode[];
+  professionalSource?: Record<string, unknown>;
+};
+
+export type StudioIrVersion = {
+  id: string;
+  projectId: string;
+  irId: string;
+  version: string;
+  summary: string;
+  patchId: string | null;
+  authorId: string;
+  createdAt: string;
+};
+
+export type StudioIrPatchOperation = {
+  op: "update_node";
+  nodeId: string;
+  fields: Record<string, unknown>;
+};
+
+export type StudioIrPatchResult = {
+  ir: StudioIr;
+  patch: Record<string, unknown>;
+  version: StudioIrVersion;
+};
+
+export type StudioIrValidation = {
+  irId: string;
+  status: "valid";
+  errors: Array<Record<string, unknown>>;
+};
+
+export type StudioIrRestoreResult = {
+  ir: StudioIr;
+  version: StudioIrVersion;
+  restoredFrom?: StudioIrVersion;
+};
+
 type StudioStateDto = {
   project_id: string;
   active_selection: {
@@ -212,6 +271,41 @@ type ProfessionalImportSourceDto = {
     project_id: string;
     professional_source?: Record<string, unknown>;
   };
+};
+
+type StudioIrNodeDto = {
+  id: string;
+  type: string;
+  name: string;
+  rect: { x: number; y: number; width: number; height: number };
+  visible?: boolean;
+  opacity?: number;
+  text?: Record<string, unknown>;
+  layout?: Record<string, unknown>;
+  component?: Record<string, unknown>;
+  nine_slice?: Record<string, unknown>;
+  parent_id?: string | null;
+  [key: string]: unknown;
+};
+
+type StudioIrDto = {
+  id: string;
+  project_id: string;
+  version: string;
+  canvas?: { width: number; height: number };
+  nodes: StudioIrNodeDto[];
+  professional_source?: Record<string, unknown>;
+};
+
+type StudioIrVersionDto = {
+  id: string;
+  project_id: string;
+  ir_id: string;
+  version: string;
+  summary: string;
+  patch_id: string | null;
+  author_id: string;
+  created_at: string;
 };
 
 export async function fetchStudioState(options: {
@@ -383,6 +477,115 @@ export async function listStudioAssetVersions(options: {
     event: version.event,
     name: version.name
   }));
+}
+
+export async function fetchStudioIr(options: {
+  projectId: string;
+  irId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioIr> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/irs/${options.irId}`,
+    options.token,
+    options.fetcher
+  );
+  const dto = await response.json() as { ir: StudioIrDto };
+  return mapStudioIrDto(dto.ir);
+}
+
+export async function listStudioIrVersions(options: {
+  projectId: string;
+  irId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioIrVersion[]> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/irs/${options.irId}/versions`,
+    options.token,
+    options.fetcher
+  );
+  const dto = await response.json() as { versions: StudioIrVersionDto[] };
+  return dto.versions.map(mapStudioIrVersionDto);
+}
+
+export async function patchStudioIr(options: {
+  projectId: string;
+  irId: string;
+  token: string;
+  baseVersion: string;
+  summary: string;
+  operations: StudioIrPatchOperation[];
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioIrPatchResult> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/irs/${options.irId}/patches`,
+    options.token,
+    options.fetcher,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        base_version: options.baseVersion,
+        summary: options.summary,
+        operations: options.operations.map((operation) => ({
+          op: operation.op,
+          node_id: operation.nodeId,
+          fields: operation.fields
+        }))
+      })
+    }
+  );
+  const dto = await response.json() as {
+    ir: StudioIrDto;
+    patch: Record<string, unknown>;
+    version: StudioIrVersionDto;
+  };
+  return {
+    ir: mapStudioIrDto(dto.ir),
+    patch: dto.patch,
+    version: mapStudioIrVersionDto(dto.version)
+  };
+}
+
+export async function validateStudioIr(options: {
+  projectId: string;
+  irId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioIrValidation> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/irs/${options.irId}/validate`,
+    options.token,
+    options.fetcher,
+    { method: "POST" }
+  );
+  const dto = await response.json() as { ir_id: string; status: "valid"; errors: Array<Record<string, unknown>> };
+  return { irId: dto.ir_id, status: dto.status, errors: dto.errors };
+}
+
+export async function restoreStudioIrVersion(options: {
+  projectId: string;
+  irId: string;
+  versionId: string;
+  token: string;
+  fetcher?: StudioApiFetcher;
+}): Promise<StudioIrRestoreResult> {
+  const response = await requestStudioApi(
+    `/api/projects/${options.projectId}/irs/${options.irId}/versions/${options.versionId}/restore`,
+    options.token,
+    options.fetcher,
+    { method: "POST" }
+  );
+  const dto = await response.json() as {
+    ir: StudioIrDto;
+    version: StudioIrVersionDto;
+    restored_from?: StudioIrVersionDto;
+  };
+  return {
+    ir: mapStudioIrDto(dto.ir),
+    version: mapStudioIrVersionDto(dto.version),
+    restoredFrom: dto.restored_from ? mapStudioIrVersionDto(dto.restored_from) : undefined
+  };
 }
 
 export async function copyStudioAsset(options: {
@@ -660,6 +863,39 @@ function mapProfessionalImportSourceDto(dto: ProfessionalImportSourceDto): Profe
       projectId: dto.ir.project_id,
       professionalSource: dto.ir.professional_source
     }
+  };
+}
+
+function mapStudioIrDto(dto: StudioIrDto): StudioIr {
+  return {
+    id: dto.id,
+    projectId: dto.project_id,
+    version: dto.version,
+    canvas: dto.canvas,
+    nodes: dto.nodes.map(mapStudioIrNodeDto),
+    professionalSource: dto.professional_source
+  };
+}
+
+function mapStudioIrNodeDto(dto: StudioIrNodeDto): StudioIrNode {
+  const { parent_id, nine_slice, ...rest } = dto;
+  return {
+    ...rest,
+    parentId: parent_id,
+    nineSlice: nine_slice
+  };
+}
+
+function mapStudioIrVersionDto(dto: StudioIrVersionDto): StudioIrVersion {
+  return {
+    id: dto.id,
+    projectId: dto.project_id,
+    irId: dto.ir_id,
+    version: dto.version,
+    summary: dto.summary,
+    patchId: dto.patch_id,
+    authorId: dto.author_id,
+    createdAt: dto.created_at
   };
 }
 

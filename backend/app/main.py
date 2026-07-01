@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hmac
 import smtplib
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from hashlib import pbkdf2_hmac, sha256
@@ -105,6 +106,18 @@ class SegmentationRequest(BaseModel):
 class ExportRequest(BaseModel):
     ir_id: str
     target_engine: str
+
+
+class IrPatchOperation(BaseModel):
+    op: str
+    node_id: str
+    fields: dict[str, Any]
+
+
+class IrPatchRequest(BaseModel):
+    base_version: str
+    summary: str = "Studio edit"
+    operations: list[IrPatchOperation]
 
 
 class StudioExportWizardRequest(BaseModel):
@@ -1279,6 +1292,7 @@ def create_export(
     ir = store["irs"].get(payload.ir_id)
     if not ir or ir["project_id"] != project["id"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="IR not found")
+    assert_ir_exportable(project, ir)
     export = {
         "id": make_id("exp"),
         "project_id": project["id"],
@@ -1298,6 +1312,109 @@ def create_export(
         metadata={"target_engine": payload.target_engine, "ir_id": payload.ir_id},
     )
     return export
+
+
+@app.get("/api/projects/{project_id}/irs/{ir_id}")
+def get_project_ir(project_id: str, ir_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    ir = require_project_ir(project, ir_id)
+    ensure_ir_version_history(ir, user, "Initial IR snapshot")
+    return {"ir": ir}
+
+
+@app.get("/api/projects/{project_id}/irs/{ir_id}/versions")
+def list_ir_versions(project_id: str, ir_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    ir = require_project_ir(project, ir_id)
+    ensure_ir_version_history(ir, user, "Initial IR snapshot")
+    versions = [
+        format_ir_version(version)
+        for version in store["ir_versions"].values()
+        if version["project_id"] == project["id"] and version["ir_id"] == ir["id"]
+    ]
+    versions.sort(key=lambda item: item["created_at"])
+    return {"ir_id": ir["id"], "current_version": ir["version"], "versions": versions}
+
+
+@app.post("/api/projects/{project_id}/irs/{ir_id}/validate")
+def validate_project_ir(project_id: str, ir_id: str, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    ir = require_project_ir(project, ir_id)
+    errors = validate_ir_for_export(project, ir)
+    if errors:
+        raise_ir_validation_failed(errors)
+    return {"ir_id": ir["id"], "status": "valid", "errors": []}
+
+
+@app.post("/api/projects/{project_id}/irs/{ir_id}/patches", status_code=status.HTTP_201_CREATED)
+def create_ir_patch(
+    project_id: str,
+    ir_id: str,
+    payload: IrPatchRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    ir = require_project_ir(project, ir_id)
+    ensure_ir_version_history(ir, user, "Initial IR snapshot")
+    if payload.base_version != ir.get("version"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="IR_VERSION_CONFLICT")
+    patch_id = make_id("irp")
+    before_version = ir["version"]
+    for operation in payload.operations:
+        apply_ir_patch_operation(ir, operation)
+    ir["version"] = next_ir_version(before_version)
+    version = record_ir_version(ir, user, payload.summary, patch_id)
+    patch = {
+        "id": patch_id,
+        "project_id": project["id"],
+        "ir_id": ir["id"],
+        "base_version": before_version,
+        "result_version": ir["version"],
+        "summary": payload.summary,
+        "operations": [operation.model_dump() for operation in payload.operations],
+        "author_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    store["ir_patches"][patch_id] = patch
+    append_audit_event(
+        project["id"],
+        "ir_patch_created",
+        user["id"],
+        "ir",
+        ir["id"],
+        metadata={"patch_id": patch_id, "base_version": before_version, "result_version": ir["version"]},
+    )
+    store.flush()
+    return {"ir": ir, "patch": patch, "version": format_ir_version(version)}
+
+
+@app.post("/api/projects/{project_id}/irs/{ir_id}/versions/{version_id}/restore")
+def restore_ir_version(
+    project_id: str,
+    ir_id: str,
+    version_id: str,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    project = require_project(project_id, user)
+    ir = require_project_ir(project, ir_id)
+    ensure_ir_version_history(ir, user, "Initial IR snapshot")
+    version = store["ir_versions"].get(version_id)
+    if not version or version["project_id"] != project["id"] or version["ir_id"] != ir["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="IR version not found")
+    restored = deepcopy(version["snapshot"])
+    restored["version"] = next_ir_version(ir["version"])
+    store["irs"][ir["id"]] = restored
+    restore_version = record_ir_version(restored, user, f"Restore {version['version']}", None)
+    append_audit_event(
+        project["id"],
+        "ir_version_restored",
+        user["id"],
+        "ir",
+        ir["id"],
+        metadata={"restored_from": version_id, "result_version": restored["version"]},
+    )
+    store.flush()
+    return {"ir": restored, "version": format_ir_version(restore_version), "restored_from": format_ir_version(version)}
 
 
 @app.get("/api/projects/{project_id}/audit-events")
@@ -2254,6 +2371,149 @@ def latest_project_ir(project: dict[str, Any]) -> dict[str, Any] | None:
     return project_irs[-1] if project_irs else None
 
 
+def require_project_ir(project: dict[str, Any], ir_id: str) -> dict[str, Any]:
+    ir = store["irs"].get(ir_id)
+    if not ir or ir["project_id"] != project["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="IR not found")
+    return ir
+
+
+def assert_ir_exportable(project: dict[str, Any], ir: dict[str, Any]) -> None:
+    errors = validate_ir_for_export(project, ir)
+    if errors:
+        raise_ir_validation_failed(errors)
+
+
+def validate_ir_for_export(project: dict[str, Any], ir: dict[str, Any]) -> list[dict[str, Any]]:
+    errors = []
+    canvas = ir.get("canvas") or project["canvas"]
+    for node in ir.get("nodes", []):
+        node_id = node.get("id", "")
+        if not node.get("name"):
+            errors.append({"node_id": node_id, "field": "name", "message": "Node name is required"})
+        rect = node.get("rect")
+        if not isinstance(rect, dict):
+            errors.append({"node_id": node_id, "field": "rect", "message": "Node rect is required"})
+            continue
+        if rect.get("width", 0) <= 0 or rect.get("height", 0) <= 0:
+            errors.append({"node_id": node_id, "field": "rect", "message": "Node width and height must be positive"})
+        if node.get("type") != "canvas" and (rect.get("x", 0) >= canvas["width"] or rect.get("y", 0) >= canvas["height"]):
+            errors.append({"node_id": node_id, "field": "rect", "message": "Node is outside the canvas"})
+    return errors
+
+
+def raise_ir_validation_failed(errors: list[dict[str, Any]]) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={"code": "EXPORT_VALIDATION_FAILED", "errors": errors},
+    )
+
+
+def ensure_ir_version_history(ir: dict[str, Any], user: dict[str, Any], summary: str) -> dict[str, Any]:
+    existing = [
+        version
+        for version in store["ir_versions"].values()
+        if version["project_id"] == ir["project_id"] and version["ir_id"] == ir["id"]
+    ]
+    if existing:
+        existing.sort(key=lambda item: item["created_at"])
+        return existing[0]
+    return record_ir_version(ir, user, summary, None)
+
+
+def record_ir_version(
+    ir: dict[str, Any],
+    user: dict[str, Any],
+    summary: str,
+    patch_id: str | None,
+) -> dict[str, Any]:
+    version = {
+        "id": make_id("irv"),
+        "project_id": ir["project_id"],
+        "ir_id": ir["id"],
+        "version": ir["version"],
+        "summary": summary,
+        "patch_id": patch_id,
+        "author_id": user["id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "snapshot": deepcopy(ir),
+    }
+    store["ir_versions"][version["id"]] = version
+    return version
+
+
+def format_ir_version(version: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": version["id"],
+        "project_id": version["project_id"],
+        "ir_id": version["ir_id"],
+        "version": version["version"],
+        "summary": version["summary"],
+        "patch_id": version["patch_id"],
+        "author_id": version["author_id"],
+        "created_at": version["created_at"],
+    }
+
+
+def next_ir_version(version: str) -> str:
+    parts = version.split(".")
+    if len(parts) != 3 or not parts[-1].isdigit():
+        return f"{version}.1"
+    parts[-1] = str(int(parts[-1]) + 1)
+    return ".".join(parts)
+
+
+def apply_ir_patch_operation(ir: dict[str, Any], operation: IrPatchOperation) -> None:
+    if operation.op != "update_node":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported IR patch operation")
+    node = next((item for item in ir.get("nodes", []) if item["id"] == operation.node_id), None)
+    if not node:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="IR node not found")
+    for field, value in operation.fields.items():
+        apply_ir_node_field(node, field, value)
+
+
+def apply_ir_node_field(node: dict[str, Any], field: str, value: Any) -> None:
+    if field == "name":
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node name")
+        node["name"] = value.strip()
+        return
+    if field == "rect":
+        node["rect"] = validate_ir_rect(value)
+        return
+    if field == "visible":
+        if not isinstance(value, bool):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node visibility")
+        node["visible"] = value
+        return
+    if field == "opacity":
+        if not isinstance(value, (int, float)) or value < 0 or value > 1:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node opacity")
+        node["opacity"] = value
+        return
+    if field in {"text", "layout", "component", "nine_slice"}:
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Invalid node {field}")
+        node[field] = value
+        return
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Unsupported node field: {field}")
+
+
+def validate_ir_rect(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node rect")
+    rect = {}
+    for key in ["x", "y", "width", "height"]:
+        raw_value = value.get(key)
+        if not isinstance(raw_value, int):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node rect")
+        rect[key] = raw_value
+    if rect["width"] <= 0 or rect["height"] <= 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid node rect")
+    return rect
+
+
 def build_studio_timeline(project: dict[str, Any], target_engine: str | None = None) -> list[dict[str, Any]]:
     engine = target_engine or latest_project_export_engine(project) or project["target_engine"]
     jobs = [job for job in store["jobs"].values() if job["project_id"] == project["id"]]
@@ -2463,6 +2723,18 @@ def build_studio_layered_slice_summary(ir: dict[str, Any] | None) -> dict[str, A
 def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
     width = project["canvas"]["width"]
     height = project["canvas"]["height"]
+    scale_x = width / 1920
+    scale_y = height / 1080
+    scale_rect = lambda rect: {
+        "x": int(rect["x"] * scale_x),
+        "y": int(rect["y"] * scale_y),
+        "width": max(1, int(rect["width"] * scale_x)),
+        "height": max(1, int(rect["height"] * scale_y)),
+    }
+    panel = scale_rect({"x": 240, "y": 120, "width": 1440, "height": 760})
+    button = scale_rect({"x": 1320, "y": 820, "width": 280, "height": 96})
+    button["x"] = min(button["x"], width - button["width"])
+    button["y"] = min(button["y"], height - button["height"])
     return {
         "id": make_id("ir"),
         "project_id": project["id"],
@@ -2471,10 +2743,10 @@ def build_demo_ir(project: dict[str, Any]) -> dict[str, Any]:
         "canvas": {"width": width, "height": height},
         "nodes": [
             {"id": "root", "type": "canvas", "name": project["name"], "rect": {"x": 0, "y": 0, "width": width, "height": height}},
-            {"id": "panel_main", "type": "panel", "name": "Main Panel", "rect": {"x": 240, "y": 120, "width": 1440, "height": 760}},
-            {"id": "button_primary", "type": "button", "name": "Primary CTA", "rect": {"x": 1320, "y": 820, "width": 280, "height": 96}},
-            {"id": "icon_item", "type": "icon", "name": "Inventory Icon", "rect": {"x": 360, "y": 220, "width": 128, "height": 128}},
-            {"id": "title_text", "type": "text", "name": "Screen Title", "rect": {"x": 320, "y": 150, "width": 640, "height": 72}},
+            {"id": "panel_main", "type": "panel", "name": "Main Panel", "rect": panel},
+            {"id": "button_primary", "type": "button", "name": "Primary CTA", "rect": button},
+            {"id": "icon_item", "type": "icon", "name": "Inventory Icon", "rect": scale_rect({"x": 360, "y": 220, "width": 128, "height": 128})},
+            {"id": "title_text", "type": "text", "name": "Screen Title", "rect": scale_rect({"x": 320, "y": 150, "width": 640, "height": 72})},
         ],
     }
 

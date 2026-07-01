@@ -2680,6 +2680,194 @@ def test_professional_import_converts_psd_layers_to_asset_ir():
     assert imported["ir"]["nodes"][3]["text"]["content"] == "START"
 
 
+def test_ir_patch_creates_version_and_export_uses_latest_ir():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Editable HUD",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    imported = client.post(
+        f"/api/projects/{project['id']}/imports/professional",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "file_name": "editable-hud.psd",
+            "layers": [
+                {
+                    "id": "layer_button",
+                    "name": "Start Button",
+                    "kind": "image",
+                    "rect": {"x": 760, "y": 820, "width": 400, "height": 120},
+                },
+            ],
+        },
+    ).json()
+    ir = imported["ir"]
+
+    patch_response = client.post(
+        f"/api/projects/{project['id']}/irs/{ir['id']}/patches",
+        headers=headers,
+        json={
+            "base_version": ir["version"],
+            "summary": "Move CTA into safe area",
+            "operations": [
+                {
+                    "op": "update_node",
+                    "node_id": "layer_button",
+                    "fields": {
+                        "name": "Safe Area CTA",
+                        "rect": {"x": 840, "y": 760, "width": 360, "height": 112},
+                        "visible": False,
+                    },
+                }
+            ],
+        },
+    )
+
+    assert patch_response.status_code == 201
+    patched = patch_response.json()
+    assert patched["ir"]["version"] == "0.1.1"
+    assert patched["version"]["summary"] == "Move CTA into safe area"
+    edited_node = next(node for node in patched["ir"]["nodes"] if node["id"] == "layer_button")
+    assert edited_node["name"] == "Safe Area CTA"
+    assert edited_node["visible"] is False
+
+    export_response = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": ir["id"], "target_engine": "unity"},
+    )
+    assert export_response.status_code == 201
+    manifest_node = export_response.json()["package"]["manifest"]["asset_ir"]["nodes"][0]
+    assert manifest_node["name"] == "Safe Area CTA"
+    assert manifest_node["rect"] == {"x": 840, "y": 760, "width": 360, "height": 112}
+
+
+def test_ir_version_restore_reverts_export_manifest():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Rollback HUD",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    imported = client.post(
+        f"/api/projects/{project['id']}/imports/professional",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "file_name": "rollback-hud.psd",
+            "layers": [
+                {
+                    "id": "layer_title",
+                    "name": "Original Title",
+                    "kind": "text",
+                    "text": "START",
+                    "rect": {"x": 120, "y": 80, "width": 320, "height": 72},
+                },
+            ],
+        },
+    ).json()
+    ir = imported["ir"]
+    versions = client.get(
+        f"/api/projects/{project['id']}/irs/{ir['id']}/versions",
+        headers=headers,
+    )
+    assert versions.status_code == 200
+    initial_version_id = versions.json()["versions"][0]["id"]
+
+    patched = client.post(
+        f"/api/projects/{project['id']}/irs/{ir['id']}/patches",
+        headers=headers,
+        json={
+            "base_version": ir["version"],
+            "summary": "Rename title for experiment",
+            "operations": [
+                {
+                    "op": "update_node",
+                    "node_id": "layer_title",
+                    "fields": {"name": "Experimental Title", "text": {"content": "PLAY"}},
+                }
+            ],
+        },
+    )
+    assert patched.status_code == 201
+
+    restored = client.post(
+        f"/api/projects/{project['id']}/irs/{ir['id']}/versions/{initial_version_id}/restore",
+        headers=headers,
+    )
+    assert restored.status_code == 200
+    restored_node = next(node for node in restored.json()["ir"]["nodes"] if node["id"] == "layer_title")
+    assert restored_node["name"] == "Original Title"
+    assert restored_node["text"]["content"] == "START"
+
+    export_response = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": ir["id"], "target_engine": "unity"},
+    )
+    assert export_response.status_code == 201
+    manifest_node = export_response.json()["package"]["manifest"]["asset_ir"]["nodes"][0]
+    assert manifest_node["name"] == "Original Title"
+
+
+def test_ir_validation_blocks_export_with_invalid_nodes():
+    headers = auth_headers()
+    project = client.post(
+        "/api/projects",
+        headers=headers,
+        json={
+            "name": "Invalid IR HUD",
+            "target_engine": "unity",
+            "canvas": {"width": 1920, "height": 1080},
+        },
+    ).json()
+    imported = client.post(
+        f"/api/projects/{project['id']}/imports/professional",
+        headers=headers,
+        json={
+            "source_type": "psd",
+            "file_name": "invalid-ir.psd",
+            "layers": [
+                {
+                    "id": "layer_bad",
+                    "name": "Broken Slice",
+                    "kind": "image",
+                    "rect": {"x": 100, "y": 100, "width": 200, "height": 80},
+                },
+            ],
+        },
+    ).json()
+    ir_id = imported["ir"]["id"]
+    store["irs"][ir_id]["nodes"][1]["rect"]["width"] = 0
+    store.flush()
+
+    validation_response = client.post(
+        f"/api/projects/{project['id']}/irs/{ir_id}/validate",
+        headers=headers,
+    )
+    assert validation_response.status_code == 422
+    assert validation_response.json()["detail"]["code"] == "EXPORT_VALIDATION_FAILED"
+    assert validation_response.json()["detail"]["errors"][0]["node_id"] == "layer_bad"
+
+    export_response = client.post(
+        f"/api/projects/{project['id']}/exports",
+        headers=headers,
+        json={"ir_id": ir_id, "target_engine": "unity"},
+    )
+    assert export_response.status_code == 422
+    assert export_response.json()["detail"]["code"] == "EXPORT_VALIDATION_FAILED"
+
+
 def test_core_psd_to_unity_plugin_import_chain_is_connected():
     headers = auth_headers()
     project = client.post(
