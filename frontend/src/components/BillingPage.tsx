@@ -1,18 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../lib/auth-context";
-
-type BillingAccount = {
-  user_id: string;
-  credits: {
-    daily_free: number;
-    monthly: number;
-    purchased: number;
-    total_available: number;
-  };
-  usage_this_month: number;
-  plan: string;
-  next_reset_at: string;
-};
+import { type BillingAccount, purchaseCreditPackage, fetchBillingAccount } from "../lib/billing-api";
 
 export function BillingPage() {
   const { token } = useAuth();
@@ -62,15 +50,12 @@ export function BillingPage() {
   useEffect(() => {
     let cancelled = false;
     if (!token) return;
+    const authToken = token;
 
     async function loadBilling() {
       try {
         setLoading(true);
-        const res = await fetch("/api/user/billing", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) throw new Error("Failed to load billing");
-        const data = await res.json();
+        const data = await fetchBillingAccount({ token: authToken });
         if (!cancelled) {
           setBilling(data);
           setError(null);
@@ -90,24 +75,14 @@ export function BillingPage() {
     if (!token || !billing) return;
     try {
       setError(null);
-      const res = await fetch("/api/user/billing/recharge", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          amount: pkg.amount + pkg.bonus,
-          method: "stripe",
-          transaction_id: `test_${Date.now()}`,
-        }),
+      const result = await purchaseCreditPackage({
+        token,
+        package: pkg,
       });
-      if (!res.ok) throw new Error("Recharge failed");
-      const data = await res.json();
-      setBilling(data);
+      setBilling(result.billing);
       setRechargeOpen(false);
     } catch (err: any) {
-      setError(err.message || "Recharge failed");
+      setError(err.message || "Purchase failed");
     }
   };
 
@@ -131,18 +106,18 @@ export function BillingPage() {
           <section className="credits-overview">
             <div className="credit-card primary">
               <div className="credit-label">Total Available Credits</div>
-              <div className="credit-value">{billing.credits.total_available.toLocaleString()}</div>
+              <div className="credit-value">{billing.credits.totalAvailable.toLocaleString()}</div>
               <div className="credit-breakdown">
-                <span>Free: {billing.credits.daily_free.toLocaleString()}</span>
+                <span>Free: {billing.credits.dailyFree.toLocaleString()}</span>
                 <span>Monthly: {billing.credits.monthly.toLocaleString()}</span>
                 <span>Purchased: {billing.credits.purchased.toLocaleString()}</span>
               </div>
             </div>
             <div className="credit-card">
-              <div className="credit-label">Used This Month</div>
-              <div className="credit-value">{billing.usage_this_month.toLocaleString()}</div>
-              <div className="credit-meta">Plan: <strong>{billing.plan}</strong></div>
-              <div className="credit-meta">Resets: {formatDate(billing.next_reset_at)}</div>
+              <div className="credit-label">Current Plan</div>
+              <div className="credit-value small">{billing.plan.name}</div>
+              <div className="credit-meta">API: <strong>{billing.entitlement.apiEnabled ? "Enabled" : "Disabled"}</strong></div>
+              <div className="credit-meta">Rate limit: {billing.rateLimit.limit}/min</div>
             </div>
             <div className="credit-card action">
               <div className="credit-label">Buy More Credits</div>
@@ -157,9 +132,9 @@ export function BillingPage() {
             <h2>Your Plan</h2>
             <div className="plans-grid">
               {plans.map((plan) => (
-                <div key={plan.id} className={`plan-card ${plan.highlight ? "highlight" : ""} ${billing.plan === plan.id ? "current" : ""}`}>
+                <div key={plan.id} className={`plan-card ${plan.highlight ? "highlight" : ""} ${billing.plan.id === plan.id ? "current" : ""}`}>
                   {plan.highlight && <div className="plan-badge">Most Popular</div>}
-                  {billing.plan === plan.id && <div className="plan-current-badge">Current Plan</div>}
+                  {billing.plan.id === plan.id && <div className="plan-current-badge">Current Plan</div>}
                   <div className="plan-name">{plan.name}</div>
                   <div className="plan-price">
                     <span className="price-currency">$</span>
@@ -174,10 +149,10 @@ export function BillingPage() {
                   </ul>
                   <button
                     type="button"
-                    className={billing.plan === plan.id ? "btn-secondary" : plan.highlight ? "btn-primary" : "btn-outline"}
-                    disabled={billing.plan === plan.id}
+                    className={billing.plan.id === plan.id ? "btn-secondary" : plan.highlight ? "btn-primary" : "btn-outline"}
+                    disabled={billing.plan.id === plan.id}
                   >
-                    {billing.plan === plan.id ? "Current Plan" : "Upgrade"}
+                    {billing.plan.id === plan.id ? "Current Plan" : "Upgrade"}
                   </button>
                 </div>
               ))}
@@ -189,13 +164,19 @@ export function BillingPage() {
             <div className="usage-bar">
               <div
                 className="usage-fill"
-                style={{ width: `${Math.min(100, (billing.usage_this_month / (billing.credits.monthly + billing.credits.purchased + billing.credits.daily_free || 1)) * 100)}%` }}
+                style={{ width: `${Math.min(100, ((billing.credits.monthly + billing.credits.dailyFree) / (billing.credits.totalAvailable || 1)) * 100)}%` }}
               />
             </div>
             <div className="usage-meta">
-              <span>{billing.usage_this_month.toLocaleString()} used</span>
-              <span>{billing.credits.total_available.toLocaleString()} remaining</span>
+              <span>{billing.credits.deductionOrder.join(" -> ")}</span>
+              <span>{billing.credits.totalAvailable.toLocaleString()} remaining</span>
             </div>
+            {billing.recentOrders.length > 0 && (
+              <div className="usage-meta">
+                <span>Latest order: {billing.recentOrders[0].id}</span>
+                <span>{billing.recentOrders[0].status} · {formatDate(billing.recentOrders[0].createdAt)}</span>
+              </div>
+            )}
           </section>
         </>
       )}

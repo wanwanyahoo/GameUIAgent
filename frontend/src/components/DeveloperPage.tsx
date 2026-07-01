@@ -37,7 +37,8 @@ const apiEndpoints = [
     category: "Billing",
     endpoints: [
       { method: "GET", path: "/api/user/billing", desc: "Get billing and credit info" },
-      { method: "POST", path: "/api/user/billing/recharge", desc: "Recharge credits" },
+      { method: "POST", path: "/api/user/billing/orders", desc: "Create a pending credit purchase order" },
+      { method: "POST", path: "/api/user/billing/orders/{id}/confirm", desc: "Confirm a provider-paid billing order" },
     ],
   },
 ];
