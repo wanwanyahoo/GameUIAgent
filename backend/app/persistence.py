@@ -26,6 +26,7 @@ STORE_SECTIONS = [
     "import_logs",
     "plugin_devices",
     "billing_accounts",
+    "billing_orders",
     "usage_events",
     "rate_limits",
     "studio_states",

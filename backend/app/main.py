@@ -1587,6 +1587,12 @@ def plugin_export_import_logs(export_id: str, user: dict[str, Any] = Depends(cur
 
 @app.post("/api/user/api-keys", status_code=status.HTTP_201_CREATED)
 def create_api_key(payload: ApiKeyRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, str]:
+    account = billing_account_for(user)
+    if not account["plan"].get("api_enabled", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API access is not enabled for the current plan",
+        )
     raw_key = f"guk_{token_hex(24)}"
     api_key = {"id": make_id("key"), "name": payload.name, "user": user, "created_at": datetime.now(timezone.utc).isoformat()}
     store["api_keys"][raw_key] = api_key
@@ -1657,20 +1663,106 @@ class RechargeRequest(BaseModel):
     transaction_id: str
 
 
-@app.post("/api/user/billing/recharge")
-def recharge_credits(payload: RechargeRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+class BillingOrderRequest(BaseModel):
+    amount: int = Field(gt=0)
+    method: str = Field(pattern="^(stripe|paypal|alipay|wechat)$")
+    external_reference: str | None = None
+
+
+class BillingOrderConfirmRequest(BaseModel):
+    provider_payment_id: str
+
+
+def billing_entitlement_snapshot(account: dict[str, Any]) -> dict[str, Any]:
+    plan = account["plan"]
+    return {
+        "plan_id": plan["id"],
+        "api_enabled": plan["api_enabled"],
+        "rate_limit_per_minute": plan["rate_limit_per_minute"],
+        "concurrent_ai_tasks": plan["concurrent_ai_tasks"],
+    }
+
+
+def user_billing_orders(user: dict[str, Any]) -> list[dict[str, Any]]:
+    orders = [
+        order
+        for order in store["billing_orders"].values()
+        if order["user_id"] == user["id"]
+    ]
+    return sorted(orders, key=lambda item: item["created_at"], reverse=True)
+
+
+@app.post("/api/user/billing/orders", status_code=status.HTTP_201_CREATED)
+def create_billing_order(payload: BillingOrderRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
     account = billing_account_for(user)
-    account["credits"]["purchased"] += payload.amount
-    store.flush()
+    order = {
+        "id": make_id("ord"),
+        "user_id": user["id"],
+        "credits": payload.amount,
+        "provider": payload.method,
+        "external_reference": payload.external_reference,
+        "provider_payment_id": None,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "paid_at": None,
+        "entitlement_snapshot": billing_entitlement_snapshot(account),
+    }
+    store["billing_orders"][order["id"]] = order
     append_audit_event(
         None,
-        "billing_recharge",
+        "billing_order_created",
         user["id"],
-        "billing",
-        user["id"],
-        metadata={"amount": payload.amount, "method": payload.method, "transaction_id": payload.transaction_id},
+        "billing_order",
+        order["id"],
+        status_value="pending",
+        metadata={"credits": order["credits"], "provider": order["provider"]},
     )
-    return format_billing_account(account)
+    store.flush()
+    return order
+
+
+@app.get("/api/user/billing/orders")
+def list_billing_orders(user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    return {"orders": user_billing_orders(user)}
+
+
+@app.post("/api/user/billing/orders/{order_id}/confirm")
+def confirm_billing_order(
+    order_id: str,
+    payload: BillingOrderConfirmRequest,
+    user: dict[str, Any] = Depends(current_user),
+) -> dict[str, Any]:
+    order = store["billing_orders"].get(order_id)
+    if not order or order["user_id"] != user["id"]:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Billing order not found")
+    account = billing_account_for(user)
+    if order["status"] == "pending":
+        order["status"] = "paid"
+        order["provider_payment_id"] = payload.provider_payment_id
+        order["paid_at"] = datetime.now(timezone.utc).isoformat()
+        account["credits"]["purchased"] += order["credits"]
+        append_audit_event(
+            None,
+            "billing_order_paid",
+            user["id"],
+            "billing_order",
+            order["id"],
+            metadata={
+                "credits": order["credits"],
+                "provider": order["provider"],
+                "provider_payment_id": payload.provider_payment_id,
+            },
+        )
+        store.flush()
+    return {"order": order, "billing": format_billing_account(account)}
+
+
+@app.post("/api/user/billing/recharge")
+def recharge_credits(payload: RechargeRequest, user: dict[str, Any] = Depends(current_user)) -> dict[str, Any]:
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Direct recharge is disabled; create and confirm a billing order instead.",
+    )
 
 
 class WebhookCreateRequest(BaseModel):
@@ -3956,6 +4048,7 @@ def format_billing_account(account: dict[str, Any]) -> dict[str, Any]:
     credits = account["credits"]
     return {
         "plan": account["plan"],
+        "entitlement": billing_entitlement_snapshot(account),
         "credits": {
             **credits,
             "total_available": sum(credits.values()),
@@ -3965,6 +4058,15 @@ def format_billing_account(account: dict[str, Any]) -> dict[str, Any]:
             "limit": account["plan"]["rate_limit_per_minute"],
             "window_seconds": 60,
         },
+        "recent_orders": [
+            order
+            for order in sorted(
+                store["billing_orders"].values(),
+                key=lambda item: item["created_at"],
+                reverse=True,
+            )
+            if order["user_id"] == account["user_id"]
+        ][:5],
     }
 
 

@@ -2981,6 +2981,30 @@ def test_developer_api_deducts_credits_and_returns_rate_limit_headers():
     assert usage_event["task_id"] == task["task_id"]
 
 
+def test_api_key_creation_requires_api_entitlement(tmp_path):
+    configure_persistent_store(str(tmp_path / "api-entitlement.sqlite3"))
+    configure_object_storage(str(tmp_path / "api-entitlement-objects"))
+
+    email = f"api-entitlement-{uuid4().hex}@gameuiagent.dev"
+    client.post("/api/auth/register", json={"email": email, "password": "secret-pass", "name": "No API"})
+    login = client.post("/api/auth/login", json={"email": email, "password": "secret-pass"})
+    headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    user_id = client.get("/api/user/me", headers=headers).json()["id"]
+    account = store["billing_accounts"][user_id]
+    account["plan"] = {
+        "id": "free",
+        "name": "Free",
+        "api_enabled": False,
+        "rate_limit_per_minute": 5,
+        "concurrent_ai_tasks": 1,
+    }
+    store.flush()
+
+    response = client.post("/api/user/api-keys", headers=headers, json={"name": "blocked"})
+    assert response.status_code == 403
+    assert response.json()["detail"] == "API access is not enabled for the current plan"
+
+
 def create_engine_export(headers: dict[str, str], target_engine: str, name: str = "Plugin HUD") -> dict:
     project = client.post(
         "/api/projects",
@@ -3482,7 +3506,46 @@ def test_billing_credits_recharge_and_deduction_flow(tmp_path):
     assert billing_before["credits"]["purchased"] == 0
     assert billing_before["credits"]["total_available"] == 120
 
-    recharge_response = client.post(
+    order_response = client.post(
+        "/api/user/billing/orders",
+        headers=headers,
+        json={
+            "amount": 100,
+            "method": "stripe",
+            "external_reference": f"checkout_{uuid4().hex}",
+        },
+    )
+    assert order_response.status_code == 201
+    order = order_response.json()
+    assert order["status"] == "pending"
+    assert order["credits"] == 100
+    assert order["provider"] == "stripe"
+    assert order["entitlement_snapshot"]["plan_id"] == "pro_trial"
+
+    confirm_response = client.post(
+        f"/api/user/billing/orders/{order['id']}/confirm",
+        headers=headers,
+        json={"provider_payment_id": f"pi_{uuid4().hex}"},
+    )
+    assert confirm_response.status_code == 200
+    confirmed = confirm_response.json()
+    assert confirmed["order"]["status"] == "paid"
+    assert confirmed["billing"]["credits"]["purchased"] == 100
+
+    confirm_again = client.post(
+        f"/api/user/billing/orders/{order['id']}/confirm",
+        headers=headers,
+        json={"provider_payment_id": "ignored_duplicate"},
+    )
+    assert confirm_again.status_code == 200
+    assert confirm_again.json()["order"]["status"] == "paid"
+    assert confirm_again.json()["billing"]["credits"]["purchased"] == 100
+
+    recharged = client.get("/api/user/billing", headers=headers).json()
+    assert recharged["credits"]["purchased"] == 100
+    assert recharged["credits"]["total_available"] == 220
+
+    legacy_recharge = client.post(
         "/api/user/billing/recharge",
         headers=headers,
         json={
@@ -3491,10 +3554,7 @@ def test_billing_credits_recharge_and_deduction_flow(tmp_path):
             "transaction_id": f"txn_{uuid4().hex}",
         },
     )
-    assert recharge_response.status_code == 200
-    recharged = recharge_response.json()
-    assert recharged["credits"]["purchased"] == 100
-    assert recharged["credits"]["total_available"] == 220
+    assert legacy_recharge.status_code == 410
 
     project = client.post(
         "/api/projects",
