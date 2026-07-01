@@ -46,6 +46,8 @@ export type RunProfessionalImportActionOptions = {
   token: string;
   project: Project;
   file?: File | null;
+  figmaUrl?: string;
+  frameId?: string;
   clients?: Partial<ProfessionalImportActionClients>;
 };
 
@@ -157,6 +159,30 @@ export async function runGeneratedAssetAction(options: RunGeneratedAssetActionOp
 
 export async function runProfessionalImportAction(options: RunProfessionalImportActionOptions): Promise<RunStudioActionResult> {
   const clients = { ...defaultProfessionalImportClients, ...options.clients };
+  const figmaUrl = options.figmaUrl?.trim();
+  if (figmaUrl) {
+    const imported = await clients.createImportSource({
+      projectId: options.project.id,
+      token: options.token,
+      source: {
+        sourceType: "figma",
+        figmaUrl,
+        frameId: options.frameId?.trim() || undefined,
+        parser: "figma-api-parser",
+      },
+    });
+    const exportResult = await clients.previewExport({
+      projectId: options.project.id,
+      token: options.token,
+      targetEngine: "unity",
+    });
+    return {
+      status: "ok",
+      message: "Figma frame imported into editable Asset IR and Unity export generated",
+      result: { imported, export: exportResult }
+    };
+  }
+
   const psdName = `${options.project.name}.psd`;
   const asset = options.file
     ? await clients.uploadAsset({

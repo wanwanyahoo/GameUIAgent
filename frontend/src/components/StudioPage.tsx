@@ -56,6 +56,8 @@ export function StudioPage({ projectId }: StudioPageProps) {
   const [activePluginImportId, setActivePluginImportId] = useState<string | null>(null);
   const [latestPluginImportLog, setLatestPluginImportLog] = useState<PluginImportLog | null>(null);
   const [professionalImportFile, setProfessionalImportFile] = useState<File | null>(null);
+  const [figmaImportUrl, setFigmaImportUrl] = useState("");
+  const [figmaImportFrameId, setFigmaImportFrameId] = useState("");
 
   useEffect(() => {
     if (!projectId) {
@@ -245,7 +247,13 @@ export function StudioPage({ projectId }: StudioPageProps) {
       setActiveProfessionalImport(true);
       setError(null);
       setActionMessage(null);
-      const result = await runProfessionalImportAction({ token, project, file: professionalImportFile });
+      const result = await runProfessionalImportAction({
+        token,
+        project,
+        file: professionalImportFile,
+        figmaUrl: figmaImportUrl,
+        frameId: figmaImportFrameId,
+      });
       setActionMessage(result.message);
       const [latestStudio, latestAssets, latestExports] = await Promise.all([
         getStudioStateApi(token, project.id),
@@ -399,12 +407,28 @@ export function StudioPage({ projectId }: StudioPageProps) {
                   disabled={activeProfessionalImport}
                 />
               </label>
+              <input
+                className="studio-import-input"
+                type="url"
+                value={figmaImportUrl}
+                onChange={(event) => setFigmaImportUrl(event.currentTarget.value)}
+                placeholder="Paste Figma file or frame URL"
+                disabled={activeProfessionalImport}
+              />
+              <input
+                className="studio-import-input"
+                type="text"
+                value={figmaImportFrameId}
+                onChange={(event) => setFigmaImportFrameId(event.currentTarget.value)}
+                placeholder="Optional frame/node id, e.g. 12:34"
+                disabled={activeProfessionalImport}
+              />
               <button
                 type="button"
                 onClick={handleProfessionalImport}
                 disabled={activeProfessionalImport}
               >
-                {activeProfessionalImport ? "Importing..." : professionalImportFile ? "Upload PSD + Export Unity" : "Import PSD + Export Unity"}
+                {activeProfessionalImport ? "Importing..." : figmaImportUrl.trim() ? "Import Figma + Export Unity" : professionalImportFile ? "Upload PSD + Export Unity" : "Import PSD + Export Unity"}
               </button>
             </div>
           </div>

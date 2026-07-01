@@ -4874,6 +4874,22 @@ a {
   cursor: pointer;
 }
 
+.studio-import-input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  color: rgba(232, 247, 255, 0.88);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(124, 248, 255, 0.18);
+  border-radius: 0.45rem;
+  outline: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+}
+
+.studio-import-input::placeholder {
+  color: rgba(232, 247, 255, 0.4);
+}
+
 .studio-professional-import button:disabled {
   cursor: not-allowed;
   opacity: 0.55;

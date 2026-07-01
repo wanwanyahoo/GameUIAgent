@@ -568,6 +568,54 @@ describe("studio API client", () => {
     assert.equal(result.message, "PSD file uploaded, parsed into editable Asset IR and Unity export generated");
   });
 
+  it("imports Figma frames before Unity export when a Figma URL is provided", async () => {
+    const calls: Array<{ action: string; value?: string }> = [];
+
+    const result = await runProfessionalImportAction({
+      token: "tok_1",
+      project: {
+        id: "prj_1",
+        name: "Figma HUD",
+        target_engine: "unity",
+        canvas: { width: 1920, height: 1080 },
+        status: "active",
+        owner_id: "usr_1",
+        created_at: "2026-01-01T00:00:00Z",
+        updated_at: "2026-01-01T00:00:00Z",
+      },
+      figmaUrl: "https://www.figma.com/file/gameuiagent/HUD?node-id=12-34",
+      frameId: "12:34",
+      clients: {
+        createImportSource: async (options) => {
+          calls.push({ action: "figma", value: `${options.source.sourceType}:${options.source.figmaUrl}:${options.source.frameId}` });
+          return {
+            id: "imp_figma",
+            projectId: options.projectId,
+            status: "parsed",
+            source: {
+              sourceType: "figma",
+              figmaUrl: options.source.figmaUrl,
+              frameId: options.source.frameId,
+              parser: options.source.parser ?? "figma-api-parser"
+            },
+            parseSummary: { parser: "figma-api-parser", preservedLayers: 4, warnings: [] },
+            ir: { id: "ir_figma", projectId: options.projectId }
+          };
+        },
+        previewExport: async (options) => {
+          calls.push({ action: "export", value: options.targetEngine });
+          return { export: { id: "exp_figma_unity" } };
+        }
+      }
+    });
+
+    assert.deepEqual(calls, [
+      { action: "figma", value: "figma:https://www.figma.com/file/gameuiagent/HUD?node-id=12-34:12:34" },
+      { action: "export", value: "unity" }
+    ]);
+    assert.equal(result.message, "Figma frame imported into editable Asset IR and Unity export generated");
+  });
+
   it("manages queued Studio AI jobs", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = async (url: string, init?: RequestInit) => {
